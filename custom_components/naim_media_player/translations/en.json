@@ -1,0 +1,26 @@
+{
+  "config": {
+      "step": {
+          "user": {
+              "title": "Connect to Naim Device",
+              "description": "Set up your Naim Media Player. Default IP: {default_ip}",
+              "data": {
+                  "ip_address": "IP Address (e.g., 192.168.1.127)",
+                  "name": "Name (e.g., Naim Atom)",
+                  "entity_id": "Entity ID (e.g., naim_atom)"
+              }
+          }
+      },
+      "error": {
+          "cannot_connect": "Failed to connect to device. Please check the IP address and ensure the device is powered on.",
+          "unknown": "Unexpected error occurred during setup",
+          "invalid_auth": "Invalid authentication",
+          "timeout": "Connection timed out",
+          "already_configured": "This Naim device is already configured",
+          "invalid_entity_id": "Invalid entity ID"
+      },
+      "abort": {
+          "already_configured": "This Naim device is already configured"
+      }
+  }
+}

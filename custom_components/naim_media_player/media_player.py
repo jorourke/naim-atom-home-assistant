@@ -3,35 +3,26 @@
 import asyncio
 import json
 import logging
+import random
+import string
 from enum import Enum, IntEnum
 
 import aiohttp
-import homeassistant.helpers.config_validation as cv
-import voluptuous as vol
 from homeassistant.components.media_player import (
-    PLATFORM_SCHEMA,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import DiscoveryInfoType
 
 from .const import DEFAULT_NAME
 
 PLATFORMS = [Platform.MEDIA_PLAYER]
 
 _LOGGER = logging.getLogger(__name__)
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_IP_ADDRESS): cv.string,
-        vol.Optional(CONF_NAME): cv.string,
-    }
-)
 
 
 class NaimTransportState(IntEnum):
@@ -65,27 +56,41 @@ NAIM_TRANSPORT_STATE_TO_HA_STATE = {
 CONST_VOLUME_STEP = 0.05
 
 
-async def async_setup_platform(
+async def async_setup_entry(
     hass: HomeAssistant,
-    config: dict,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
+    entry: ConfigEntry,
+    async_add_entities,
 ) -> None:
-    """Set up the Naim Control media player platform."""
-    ip_address = config[CONF_IP_ADDRESS]
-    name = config.get(CONF_NAME, DEFAULT_NAME)
-    async_add_entities([NaimPlayer(hass, name, ip_address)], True)
+    """Set up the Naim Media Player from a config entry."""
+    ip_address = entry.data[CONF_IP_ADDRESS]
+    name = entry.data.get(CONF_NAME, DEFAULT_NAME)
+    entity_id = entry.data.get("entity_id")
+
+    async_add_entities([NaimPlayer(hass, name, ip_address, entity_id)], True)
 
 
 class NaimPlayer(MediaPlayerEntity):
     """Representation of a Naim Player."""
 
-    def __init__(self, hass, name, ip_address):
+    def __init__(self, hass, name, ip_address, entity_id=None):
         """Initialize the media player."""
         _LOGGER.info("Initializing Naim Control media player: %s at %s", name, ip_address)
         self._hass = hass
         self._name = name
         self._ip_address = ip_address
+
+        # Use provided entity_id or generate one from the name
+        if entity_id:
+            self.entity_id = f"media_player.{entity_id}"
+        else:
+            suggested_id = (
+                name.lower().replace(" ", "_")
+                + "_"
+                + "".join(random.choices(string.ascii_lowercase + string.digits, k=5))
+            )
+            self.entity_id = f"media_player.{suggested_id}"
+
+        self._attr_unique_id = f"naim_{ip_address}"
         self._state = MediaPlayerState.OFF
         self._playing_state = MediaPlayerState.IDLE
         self._volume = 0.0

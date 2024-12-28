@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import DEFAULT_NAME, DOMAIN
 
@@ -25,12 +26,27 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors = {}
 
+        # Set up default/suggested values
+        suggested_values = {
+            CONF_IP_ADDRESS: "192.168.1.127",  # Example default IP
+            CONF_NAME: DEFAULT_NAME,
+            "entity_id": "naim_atom",  # Example default entity_id
+        }
+
         if user_input is not None:
             try:
                 # Test connection to the device
-                reader, writer = await asyncio.open_connection(user_input[CONF_IP_ADDRESS], 4545)
-                writer.close()
-                await writer.wait_closed()
+                try:
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(user_input[CONF_IP_ADDRESS], 4545),
+                        timeout=10,  # 10 second timeout
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                except asyncio.TimeoutError:
+                    raise ConfigEntryNotReady("Device not responding")
+                except OSError as err:
+                    raise ConfigEntryNotReady(f"Connection failed: {err}")
 
                 # Create unique ID based on IP
                 await self.async_set_unique_id(user_input[CONF_IP_ADDRESS])
@@ -38,19 +54,28 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
 
-            except asyncio.TimeoutError:
+            except ConfigEntryNotReady as err:
+                _LOGGER.error("Error connecting to device: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception as error:
                 _LOGGER.exception("Unexpected exception: %s", error)
                 errors["base"] = "unknown"
 
+            # If there were errors, keep the user's input as the suggested values
+            suggested_values.update(user_input)
+
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_IP_ADDRESS): str,
-                    vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
+                    vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
+                    vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
+                    vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
                 }
             ),
             errors=errors,
+            description_placeholders={
+                "default_ip": suggested_values[CONF_IP_ADDRESS],
+                "default_name": suggested_values[CONF_NAME],
+            },
         )
