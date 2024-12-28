@@ -1,0 +1,15 @@
+[project]
+name = "naim-atom-home-assistant"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.12.3"
+dependencies = [
+    "aiohttp>=3.9.3",
+    "homeassistant>=2024.3.3",
+    "pytest-aiohttp==1.0.5",
+    "pytest-asyncio==0.24.0",
+    "pytest-homeassistant-custom-component==0.13.190",
+    "pytest-timeout==2.3.1",
+    "pytest==8.3.3",
+]
