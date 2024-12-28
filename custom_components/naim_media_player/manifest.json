@@ -1,7 +1,7 @@
 {
   "domain": "naim_media_player",
   "name": "Naim Media Player",
-  "config_flow": false,
+  "config_flow": true,
   "documentation": "https://github.com/jorourke/naim-atom-home-assistant",
   "dependencies": [],
   "codeowners": ["@jorourke"],
