@@ -15,7 +15,10 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
 )
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, Platform
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import DiscoveryInfoType
 
 from .const import DEFAULT_NAME
 
@@ -62,7 +65,12 @@ NAIM_TRANSPORT_STATE_TO_HA_STATE = {
 CONST_VOLUME_STEP = 0.05
 
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+async def async_setup_platform(
+    hass: HomeAssistant,
+    config: dict,
+    async_add_entities: AddEntitiesCallback,
+    discovery_info: DiscoveryInfoType | None = None,
+) -> None:
     """Set up the Naim Control media player platform."""
     ip_address = config[CONF_IP_ADDRESS]
     name = config.get(CONF_NAME, DEFAULT_NAME)
@@ -126,14 +134,15 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def _socket_listener(self):
         """Listen to TCP socket updates from the device."""
-        _LOGGER.info("Starting socket listener for %s", self._name)
+        _LOGGER.info("Starting WebSocket listener for %s at %s:4545", self._name, self._ip_address)
         buffer = ""
         decoder = json.JSONDecoder()
         while True:
+            writer = None
             try:
                 reader, writer = await asyncio.open_connection(self._ip_address, 4545)
                 self._socket_connected = True
-                _LOGGER.info("Socket connected to %s:4545", self._ip_address)
+                _LOGGER.info("WebSocket connected successfully to %s:4545", self._ip_address)
 
                 while True:
                     try:
@@ -158,19 +167,25 @@ class NaimPlayer(MediaPlayerEntity):
                         _LOGGER.error("Error receiving data: %s", error)
                         break
 
-                writer.close()
-                await writer.wait_closed()
-                self._socket_connected = False
-
             except Exception as error:
                 self._socket_connected = False
                 _LOGGER.error(
-                    "Socket connection failed for %s: %s. Retrying in %s seconds",
+                    "WebSocket connection failed for %s (%s:4545): %s. Retrying in %s seconds",
                     self._name,
-                    error,
+                    self._ip_address,
+                    str(error),
                     self._socket_reconnect_interval,
                 )
                 await asyncio.sleep(self._socket_reconnect_interval)
+
+            finally:
+                self._socket_connected = False
+                if writer is not None:
+                    try:
+                        writer.close()
+                        await writer.wait_closed()
+                    except Exception as error:
+                        _LOGGER.warning("Error closing WebSocket connection: %s", error)
 
     async def _handle_socket_message(self, message):
         """Handle socket message."""
@@ -226,11 +241,14 @@ class NaimPlayer(MediaPlayerEntity):
             # Update media duration
             new_media_duration_ms = live_status.get("status", {}).get("duration")
             if new_media_duration_ms is not None:
-                new_media_duration = new_media_duration_ms / 1000  # Convert to seconds
-                if new_media_duration != self._media_duration:
-                    self._media_duration = new_media_duration
-                    _LOGGER.debug("Updated media duration to: %s seconds", self._media_duration)
-                    state_changed = True
+                try:
+                    new_media_duration = float(new_media_duration_ms) / 1000  # Convert to seconds
+                    if new_media_duration != self._media_duration:
+                        self._media_duration = new_media_duration
+                        _LOGGER.debug("Updated media duration to: %s seconds", self._media_duration)
+                        state_changed = True
+                except (ValueError, TypeError):
+                    _LOGGER.warning("Invalid media duration value received: %s", new_media_duration_ms)
 
             # Update media position
             new_media_position_ms = data.get("playTime", {}).get("i64_")
@@ -261,7 +279,7 @@ class NaimPlayer(MediaPlayerEntity):
 
             # Update source
             new_source = live_status.get("contextPath")
-            if new_source != self._source:
+            if new_source is not None and new_source != self._source:
                 if new_source.startswith("spotify"):
                     new_source = "Spotify"
                 self._source = new_source
@@ -373,15 +391,14 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def async_update(self):
         """Fetch state from the device."""
-        _LOGGER.info("Updating state for %s", self._name)
+        _LOGGER.debug("Updating state for %s", self._name)
         try:
             await self.update_state()
             # Get volume
             volume = await self.async_get_current_value("http://{ip}:15081/levels/room", "volume")
             if volume is not None:
-                _LOGGER.info("Volume retrieved is: %s", volume)
+                _LOGGER.debug("Volume retrieved: %s", volume)
                 self._volume = int(volume) / 100
-                _LOGGER.debug("Volume: %s", self._volume)
 
             # Get mute state
             mute = await self.async_get_current_value("http://{ip}:15081/levels/room", "mute")
