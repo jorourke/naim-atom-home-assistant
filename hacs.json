@@ -1,0 +1,8 @@
+{
+  "name": "Naim Media Player",
+  "render_readme": true,
+  "content_in_root": false,
+  "domains": ["media_player"],
+  "homeassistant": "2024.12.0",
+  "version": "0.1.0"
+}
