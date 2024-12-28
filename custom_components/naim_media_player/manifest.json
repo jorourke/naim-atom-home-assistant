@@ -3,6 +3,7 @@
   "name": "Naim Media Player",
   "config_flow": true,
   "documentation": "https://github.com/jorourke/naim-atom-home-assistant",
+  "issue_tracker": "https://github.com/jorourke/naim-atom-home-assistant/issues",
   "dependencies": [],
   "codeowners": ["@jorourke"],
   "requirements": [],
