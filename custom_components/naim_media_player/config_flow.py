@@ -1,87 +1,81 @@
-"""Config flow for Naim Control integration."""
+"""Config flow for Naim Media Player integration."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
-from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import DEFAULT_NAME, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_IP_ADDRESS): str,
-        vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
-    }
-)
 
-
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect."""
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"http://{data[CONF_IP_ADDRESS]}:15081/power", timeout=5
-            ) as response:
-                if response.status != 200:
-                    raise CannotConnect
-
-                # Try to parse the response to validate it's a Naim device
-                response_data = await response.json()
-                if "system" not in response_data:
-                    raise InvalidResponse
-
-    except aiohttp.ClientError:
-        raise CannotConnect
-    except Exception:
-        raise InvalidResponse
-
-    # Return info to be stored in the config entry
-    return {"title": data[CONF_NAME]}
-
-
-class NaimControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Naim Control."""
+class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Naim Media Player."""
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
-        errors: dict[str, str] = {}
+        errors = {}
+
+        # Set up default/suggested values
+        suggested_values = {
+            CONF_IP_ADDRESS: "192.168.1.127",  # Example default IP
+            CONF_NAME: DEFAULT_NAME,
+            "entity_id": "naim_atom",  # Example default entity_id
+        }
 
         if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
+                # Test connection to the device
+                try:
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(user_input[CONF_IP_ADDRESS], 4545),
+                        timeout=10,  # 10 second timeout
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                except asyncio.TimeoutError:
+                    raise ConfigEntryNotReady("Device not responding")
+                except OSError as err:
+                    raise ConfigEntryNotReady(f"Connection failed: {err}")
+
+                # Create unique ID based on IP
+                await self.async_set_unique_id(user_input[CONF_IP_ADDRESS])
+                self._abort_if_unique_id_configured()
+
+                return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+
+            except ConfigEntryNotReady as err:
+                _LOGGER.error("Error connecting to device: %s", err)
                 errors["base"] = "cannot_connect"
-            except InvalidResponse:
-                errors["base"] = "invalid_response"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
+            except Exception as error:
+                _LOGGER.exception("Unexpected exception: %s", error)
                 errors["base"] = "unknown"
-            else:
-                return self.async_create_entry(title=info["title"], data=user_input)
+
+            # If there were errors, keep the user's input as the suggested values
+            suggested_values.update(user_input)
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
+                    vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
+                    vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "default_ip": suggested_values[CONF_IP_ADDRESS],
+                "default_name": suggested_values[CONF_NAME],
+            },
         )
-
-
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
-
-class InvalidResponse(HomeAssistantError):
-    """Error to indicate we received an invalid response."""
