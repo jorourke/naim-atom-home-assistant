@@ -46,6 +46,9 @@ Follow the config flow when you add it by navigating to the integrations page in
 - Web Radio
 - Spotify
 
+## Example UI
+<img src="images/media_player.png" width="400">
+
 ## Debugging
 
 If you're experiencing issues, add the following to your `configuration.yaml`:
