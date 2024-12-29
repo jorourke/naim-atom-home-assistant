@@ -1,0 +1,47 @@
+name: Python Checks
+
+on:
+  push:
+    branches:
+      - "*"
+      - "*/*"
+  pull_request:
+    branches:
+      - "*"
+      - "*/*"
+
+env:
+  PYTHON_VERSION: "3.12.3"
+
+jobs:
+  lint-and-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        run: |
+          uv venv .venv
+          source .venv/bin/activate
+          uv sync
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
+
+      - name: Lint with Ruff
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v
+        env:
+          PYTHONPATH: .
+          PYTEST_ADDOPTS: "--timeout=10"
+
+      - name: Verify manifest.json
+        run: |
+          python3 -c "import json; json.load(open('custom_components/naim_media_player/manifest.json'))"
