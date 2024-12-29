@@ -2,6 +2,7 @@
   "domain": "naim_media_player",
   "name": "Naim Media Player",
   "codeowners": ["@jorourke"],
+  "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/jorourke/naim-atom-home-assistant",
   "iot_class": "local_polling",
