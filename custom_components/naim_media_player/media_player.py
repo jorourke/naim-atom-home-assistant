@@ -18,11 +18,87 @@ from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DEFAULT_NAME
+from .const import (
+    DEFAULT_NAME,
+)
 
 PLATFORMS = [Platform.MEDIA_PLAYER]
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class MediaInfo:
+    """Handle media information."""
+
+    def __init__(self):
+        """Initialize media information."""
+        self.title = None
+        self.artist = None
+        self.album = None
+        self.duration = None
+        self.image_url = None
+        self.position = None
+
+
+class NaimPlayerState:
+    """Handle Naim player state."""
+
+    def __init__(self):
+        """Initialize state."""
+        self.power_state = MediaPlayerState.OFF
+        self.playing_state = MediaPlayerState.IDLE
+        self.volume = 0.0
+        self.muted = False
+        self.source = None
+        self.media_info = MediaInfo()
+
+    def update(self, **kwargs):
+        """Update state attributes."""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            # Handle nested media_info updates
+            elif hasattr(self.media_info, key):
+                setattr(self.media_info, key, value)
+
+    @property
+    def state(self) -> MediaPlayerState:
+        """Get player state."""
+        if self.power_state == MediaPlayerState.OFF:
+            return MediaPlayerState.OFF
+        if self.playing_state == MediaPlayerState.IDLE:
+            return self.power_state
+        return self.playing_state
+
+    @property
+    def media_title(self) -> str | None:
+        """Get media title."""
+        return self.media_info.title
+
+    @property
+    def media_artist(self) -> str | None:
+        """Get media artist."""
+        return self.media_info.artist
+
+    @property
+    def media_album(self) -> str | None:
+        """Get media album."""
+        return self.media_info.album
+
+    @property
+    def media_duration(self) -> int | None:
+        """Get media duration."""
+        return self.media_info.duration
+
+    @property
+    def media_position(self) -> int | None:
+        """Get media position."""
+        return self.media_info.position
+
+    @property
+    def media_image_url(self) -> str | None:
+        """Get media image URL."""
+        return self.media_info.image_url
 
 
 class NaimTransportState(IntEnum):
@@ -72,7 +148,7 @@ async def async_setup_entry(
 class NaimPlayer(MediaPlayerEntity):
     """Representation of a Naim Player."""
 
-    def __init__(self, hass, name, ip_address, entity_id=None):
+    def __init__(self, hass: HomeAssistant, name: str, ip_address: str, entity_id: str | None = None):
         """Initialize the media player."""
         _LOGGER.info("Initializing Naim Control media player: %s at %s", name, ip_address)
         self._hass = hass
@@ -91,11 +167,7 @@ class NaimPlayer(MediaPlayerEntity):
             self.entity_id = f"media_player.{suggested_id}"
 
         self._attr_unique_id = f"naim_{ip_address}"
-        self._state = MediaPlayerState.OFF
-        self._playing_state = MediaPlayerState.IDLE
-        self._volume = 0.0
-        self._muted = False
-        self._source = None
+        self._state = NaimPlayerState()  # MediaPlayerState.OFF
         self._source_map = {
             "Analog 1": "ana1",
             "Digital 1": "dig1",
@@ -198,104 +270,62 @@ class NaimPlayer(MediaPlayerEntity):
             data = json.loads(message)
             _LOGGER.debug("Parsed socket message data: %s", data)
 
-            # Flag to track if any state has changed
-            state_changed = False
-
             # Extract the 'data' dictionary
             live_status = data.get("data", {})
             _LOGGER.debug("Processing live status data: %s", live_status)
 
-            # Update media title
-            new_media_title = live_status.get("trackRoles", {}).get("title")
-            if new_media_title != self._media_title:
-                self._media_title = new_media_title
-                _LOGGER.debug("Updated media title to: %s", self._media_title)
-                state_changed = True
+            # Create update dictionary
+            updates = {}
 
-            # Update media artist
-            new_media_artist = live_status.get("trackRoles", {}).get("mediaData", {}).get("metaData", {}).get("artist")
-            if new_media_artist != self._media_artist:
-                self._media_artist = new_media_artist
-                _LOGGER.debug("Updated media artist to: %s", self._media_artist)
-                state_changed = True
+            # Update media info
+            track_roles = live_status.get("trackRoles", {})
+            media_data = track_roles.get("mediaData", {}).get("metaData", {})
 
-            # Update media album name
-            new_media_album_name = (
-                live_status.get("trackRoles", {}).get("mediaData", {}).get("metaData", {}).get("album")
+            updates.update(
+                {
+                    "title": track_roles.get("title"),
+                    "artist": media_data.get("artist"),
+                    "album": media_data.get("album"),
+                    "image_url": track_roles.get("icon"),
+                }
             )
-            if new_media_album_name != self._media_album_name:
-                self._media_album_name = new_media_album_name
-                _LOGGER.debug("Updated media album name to: %s", self._media_album_name)
-                state_changed = True
 
             # Update playback state
             playing_state_str = live_status.get("state")
-            new_playing_state = TRANSPORT_STATES_STRING_LOOKUP.get(playing_state_str, self._playing_state)
-            if new_playing_state != self._playing_state:
-                self._playing_state = new_playing_state
-                _LOGGER.debug("Updated playing state to: %s", self._playing_state)
-                state_changed = True
+            updates["playing_state"] = TRANSPORT_STATES_STRING_LOOKUP.get(playing_state_str, MediaPlayerState.IDLE)
 
-            # Update media image URL
-            new_media_image_url = live_status.get("trackRoles", {}).get("icon")
-            if new_media_image_url != self._media_image_url:
-                self._media_image_url = new_media_image_url
-                _LOGGER.debug("Updated media image URL to: %s", self._media_image_url)
-                state_changed = True
-
-            # Update media duration
-            new_media_duration_ms = live_status.get("status", {}).get("duration")
-            if new_media_duration_ms is not None:
+            # Update media duration and position
+            duration_ms = live_status.get("status", {}).get("duration")
+            if duration_ms is not None:
                 try:
-                    new_media_duration = float(new_media_duration_ms) / 1000  # Convert to seconds
-                    if new_media_duration != self._media_duration:
-                        self._media_duration = new_media_duration
-                        _LOGGER.debug("Updated media duration to: %s seconds", self._media_duration)
-                        state_changed = True
+                    updates["duration"] = float(duration_ms) / 1000  # Convert to seconds
                 except (ValueError, TypeError):
-                    _LOGGER.warning("Invalid media duration value received: %s", new_media_duration_ms)
+                    _LOGGER.warning("Invalid media duration value received: %s", duration_ms)
 
-            # Update media position
-            new_media_position_ms = data.get("playTime", {}).get("i64_")
-            if new_media_position_ms is not None:
-                new_media_position = new_media_position_ms / 1000  # Convert to seconds
-                if new_media_position != self._media_position:
-                    self._media_position = new_media_position
-                    _LOGGER.debug("Updated media position to: %s seconds", self._media_position)
-                    state_changed = True
+            position_ms = data.get("playTime", {}).get("i64_")
+            if position_ms is not None:
+                updates["position"] = position_ms / 1000  # Convert to seconds
 
             # Update volume
-            new_volume = data.get("senderVolume", {}).get("i32_")
-            if new_volume is not None:
-                new_volume_level = int(new_volume) / 100
-                if new_volume_level != self._volume:
-                    self._volume = new_volume_level
-                    _LOGGER.debug("Updated volume level to: %s", self._volume)
-                    state_changed = True
+            volume = data.get("senderVolume", {}).get("i32_")
+            if volume is not None:
+                updates["volume"] = int(volume) / 100
 
-            # Update mute state if provided
-            new_muted = data.get("senderMute", {}).get("i32_")
-            if new_muted is not None:
-                new_muted_bool = bool(int(new_muted))
-                if new_muted_bool != self._muted:
-                    self._muted = new_muted_bool
-                    _LOGGER.debug("Updated mute state to: %s", self._muted)
-                    state_changed = True
+            # Update mute state
+            muted = data.get("senderMute", {}).get("i32_")
+            if muted is not None:
+                updates["muted"] = bool(int(muted))
 
             # Update source
-            new_source = live_status.get("contextPath")
-            if new_source is not None and new_source != self._source:
-                if new_source.startswith("spotify"):
-                    new_source = "Spotify"
-                self._source = new_source
-                _LOGGER.debug("Updated source to: %s", self._source)
-                state_changed = True
+            source = live_status.get("contextPath")
+            if source is not None:
+                if source.startswith("spotify"):
+                    source = "Spotify"
+                updates["source"] = source
 
-            if state_changed:
-                _LOGGER.debug("State changed, updating Home Assistant")
-                self.async_write_ha_state()
-            else:
-                _LOGGER.debug("State unchanged, no update required")
+            # Update state object with all changes
+            self._state.update(**updates)
+            self.async_write_ha_state()
 
         except json.JSONDecodeError as error:
             _LOGGER.error("Error parsing socket message for %s: %s", self._name, error)
@@ -325,64 +355,62 @@ class NaimPlayer(MediaPlayerEntity):
     @property
     def media_image_url(self) -> str | None:
         """Image url of current playing media."""
-        return self._media_image_url
+        return self._state.media_image_url
 
     @property
     def media_duration(self) -> int | None:
         """Duration of current playing media in seconds."""
-        return self._media_duration
+        return self._state.media_duration
 
     @property
     def media_position(self) -> int | None:
         """Position of current playing media in seconds."""
-        return self._media_position
+        return self._state.media_position
 
     @property
     def media_album_name(self) -> str | None:
         """Album name of current playing media, music track only."""
-        return self._media_album_name
+        return self._state.media_album
 
     @property
     def media_artist(self) -> str | None:
         """Album artist of current playing media, music track only."""
-        return self._media_artist
+        return self._state.media_artist
 
     @property
     def is_playing(self):
         """Return true if the device is playing."""
-        return self.state == MediaPlayerState.PLAYING
+        return self._state.state == MediaPlayerState.PLAYING
 
     @property
     def is_paused(self):
         """Return true if the device is paused."""
-        return self.state == MediaPlayerState.PAUSED
+        return self._state.state == MediaPlayerState.PAUSED
 
     @property
     def is_idle(self):
         """Return true if the device is idle."""
-        return self.state == MediaPlayerState.IDLE
+        return self._state.state == MediaPlayerState.IDLE
 
     @property
     def state(self) -> MediaPlayerState | None:
         """Return the state of the device."""
-        if self._playing_state == MediaPlayerState.IDLE:
-            return self._state
-        return self._playing_state
+        return self._state.state
 
     @property
     def volume_level(self):
         """Volume level of the media player (0..1)."""
-        return self._volume
+        return self._state.volume
 
     @property
     def is_volume_muted(self):
         """Boolean if volume is currently muted."""
-        return self._muted
+        return self._state.muted
 
     @property
     def source(self):
         """Return the current input source."""
-        return self._source
+        return self._state.source
 
     @property
     def source_list(self):
@@ -390,27 +418,36 @@ class NaimPlayer(MediaPlayerEntity):
         return self._source_list
 
     @property
-    def media_title(self):
+    def media_title(self) -> str | None:
         """Title of current playing media."""
-        return self._media_title
+        return self._state.title
 
     async def async_update(self):
         """Fetch state from the device."""
         _LOGGER.debug("Updating state for %s", self._name)
         try:
-            await self.update_state()
+            # Get power state
+            power = await self.async_get_current_value("http://{ip}:15081/power", "system")
+            if power == "lona":
+                self._state.update(power_state=MediaPlayerState.OFF)
+            elif power == "on":
+                transport_state = await self.async_get_current_value("http://{ip}:15081/nowplaying", "transportState")
+                self._state.update(
+                    power_state=MediaPlayerState.ON,
+                    playing_state=NAIM_TRANSPORT_STATE_TO_HA_STATE.get(transport_state, MediaPlayerState.ON),
+                )
+
             # Get volume
             volume = await self.async_get_current_value("http://{ip}:15081/levels/room", "volume")
             if volume is not None:
-                _LOGGER.debug("Volume retrieved: %s", volume)
-                self._volume = int(volume) / 100
+                self._state.update(volume=int(volume) / 100)
 
             # Get mute state
             mute = await self.async_get_current_value("http://{ip}:15081/levels/room", "mute")
             if mute is not None:
-                self._muted = bool(int(mute))
-                _LOGGER.debug("Mute state: %s", self._muted)
+                self._state.update(muted=bool(int(mute)))
 
+            # Update media info
             await self.update_media_info()
 
         except aiohttp.ClientError as error:
@@ -418,21 +455,20 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def update_media_info(self):
         """Update media info from nowplaying endpoint."""
-        self._media_title = await self.async_get_current_value("http://{ip}:15081/nowplaying", "title")
-        self._media_artist = await self.async_get_current_value("http://{ip}:15081/nowplaying", "artistName")
-        self._media_album_name = await self.async_get_current_value("http://{ip}:15081/nowplaying", "albumName")
-        self._media_duration = await self.async_get_current_value("http://{ip}:15081/nowplaying", "duration")
-        self._media_position = await self.async_get_current_value("http://{ip}:15081/nowplaying", "transportPosition")
-        self._media_image_url = await self.async_get_current_value("http://{ip}:15081/nowplaying", "artwork")
+        updates = {
+            "title": await self.async_get_current_value("http://{ip}:15081/nowplaying", "title"),
+            "artist": await self.async_get_current_value("http://{ip}:15081/nowplaying", "artistName"),
+            "album": await self.async_get_current_value("http://{ip}:15081/nowplaying", "albumName"),
+            "duration": await self.async_get_current_value("http://{ip}:15081/nowplaying", "duration"),
+            "position": await self.async_get_current_value("http://{ip}:15081/nowplaying", "transportPosition"),
+            "image_url": await self.async_get_current_value("http://{ip}:15081/nowplaying", "artwork"),
+        }
+
         device_source = await self.async_get_current_value("http://{ip}:15081/nowplaying", "source")
-        self._source = next((k for k, v in self._source_map.items() if v == device_source), self._source)
-        _LOGGER.debug("Media title: %s", self._media_title)
-        _LOGGER.debug("Media artist: %s", self._media_artist)
-        _LOGGER.debug("Media album: %s", self._media_album_name)
-        _LOGGER.debug("Media duration: %s", self._media_duration)
-        _LOGGER.debug("Media position: %s", self._media_position)
-        _LOGGER.debug("Media image URL: %s", self._media_image_url)
-        _LOGGER.debug("Source: %s", self._source)
+        if device_source:
+            updates["source"] = next((k for k, v in self._source_map.items() if v == device_source), self._state.source)
+
+        self._state.update(**updates)
 
     async def async_turn_on(self):
         """Turn the media player on."""
@@ -454,16 +490,21 @@ class NaimPlayer(MediaPlayerEntity):
         except aiohttp.ClientError as error:
             _LOGGER.error("Error turning off %s: %s", self._name, error)
 
-    async def update_state(self):
+    async def update_state(self) -> None:
         """Update the state of the media player."""
         _LOGGER.info("Updating state for %s", self._name)
         state = await self.async_get_current_value("http://{ip}:15081/power", "system")
         if state == "lona":
-            self._state = MediaPlayerState.OFF
+            self._state.update(power_state=MediaPlayerState.OFF)
         elif state == "on":
             transport_state = await self.async_get_current_value("http://{ip}:15081/nowplaying", "transportState")
-            self._state = NAIM_TRANSPORT_STATE_TO_HA_STATE.get(transport_state, MediaPlayerState.ON)
-            _LOGGER.debug("State updated to %s for %s", self._state, self._name)
+            self._state.update(
+                power_state=MediaPlayerState.ON,
+                playing_state=NAIM_TRANSPORT_STATE_TO_HA_STATE.get(transport_state, MediaPlayerState.ON),
+            )
+        _LOGGER.debug(
+            f"Power state updated to {self._state.power_state}, playing state to {self._state.playing_state} for {self._name}"
+        )
 
     async def async_mute_volume(self, mute):
         """Mute the volume."""
@@ -475,8 +516,8 @@ class NaimPlayer(MediaPlayerEntity):
                 await async_get_clientsession(self._hass).put(
                     f"http://{self._ip_address}:15081/levels/room?mute={value}"
                 )
-                self._muted = bool(value)
-                _LOGGER.debug("Successfully set mute to %s for %s", self._muted, self._name)
+                self._state.update(muted=bool(value))
+                _LOGGER.debug("Successfully set mute to %s for %s", self._state.muted, self._name)
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting mute for %s: %s", self._name, error)
 
@@ -485,7 +526,7 @@ class NaimPlayer(MediaPlayerEntity):
         _LOGGER.info("Setting volume to %s for %s", volume, self._name)
         try:
             device_volume = int(volume * 100)
-            self._volume = volume
+            self._state.update(volume=volume)
             await async_get_clientsession(self._hass).put(
                 f"http://{self._ip_address}:15081/levels/room?volume={device_volume}"
             )
@@ -493,16 +534,16 @@ class NaimPlayer(MediaPlayerEntity):
                 "Successfully set volume to %s for %s, current volume is now %s",
                 volume,
                 self._name,
-                self._volume,
+                self._state.volume,
             )
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting volume for %s: %s", self._name, error)
 
     async def async_volume_up(self):
         """Increment volume by a fixed amount."""
-        _LOGGER.info("Incrementing volume for %s, current volume is %s", self._name, self._volume)
+        _LOGGER.info("Incrementing volume for %s, current volume is %s", self._name, self._state.volume)
         try:
-            new_volume = min(1.0, self._volume + CONST_VOLUME_STEP)  # Increment by 10%, max at 100%
+            new_volume = min(1.0, self._state.volume + CONST_VOLUME_STEP)  # Increment by 10%, max at 100%
             await self.async_set_volume_level(new_volume)
             _LOGGER.debug("Successfully incremented volume to %s for %s", new_volume, self._name)
         except aiohttp.ClientError as error:
@@ -510,9 +551,9 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def async_volume_down(self):
         """Decrement volume by a fixed amount."""
-        _LOGGER.info("Decrementing volume for %s, current volume is %s", self._name, self._volume)
+        _LOGGER.info("Decrementing volume for %s, current volume is %s", self._name, self._state.volume)
         try:
-            new_volume = max(0.0, self._volume - CONST_VOLUME_STEP)  # Decrement by 10%, min at 0%
+            new_volume = max(0.0, self._state.volume - CONST_VOLUME_STEP)  # Decrement by 10%, min at 0%
             await self.async_set_volume_level(new_volume)
             _LOGGER.debug("Successfully decremented volume to %s for %s", new_volume, self._name)
         except aiohttp.ClientError as error:
@@ -527,7 +568,7 @@ class NaimPlayer(MediaPlayerEntity):
                 await async_get_clientsession(self._hass).get(
                     f"http://{self._ip_address}:15081/inputs/{input_id}?cmd=select"
                 )
-                self._source = source
+                self._state.update(source=source)
                 _LOGGER.debug("Successfully selected source %s for %s", source, self._name)
             except aiohttp.ClientError as error:
                 _LOGGER.error("Error selecting source for %s: %s", self._name, error)
@@ -577,7 +618,7 @@ class NaimPlayer(MediaPlayerEntity):
             await async_get_clientsession(self._hass).get(
                 f"http://{self._ip_address}:15081/nowplaying?cmd=seek&position={position_ms}"
             )
-            self._media_position = position
+            self._state.update(position=position)
             _LOGGER.debug("Successfully seeked to position %s for %s", position, self._name)
 
         except aiohttp.ClientError as error:
