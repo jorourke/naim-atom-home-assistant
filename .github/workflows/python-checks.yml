@@ -35,12 +35,18 @@ jobs:
           ruff check .
           ruff format --check .
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          pytest tests/ -v
+          pytest tests/ -v --cov=custom_components/naim_media_player --cov-report=xml --cov-report=term
         env:
           PYTHONPATH: .
           PYTEST_ADDOPTS: "--timeout=10"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: true
 
       - name: Verify manifest.json
         run: |

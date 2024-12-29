@@ -167,7 +167,7 @@ class NaimPlayer(MediaPlayerEntity):
             self.entity_id = f"media_player.{suggested_id}"
 
         self._attr_unique_id = f"naim_{ip_address}"
-        self._state = NaimPlayerState()  # MediaPlayerState.OFF
+        self._state = NaimPlayerState()
         self._source_map = {
             "Analog 1": "ana1",
             "Digital 1": "dig1",
@@ -420,7 +420,7 @@ class NaimPlayer(MediaPlayerEntity):
     @property
     def media_title(self) -> str | None:
         """Title of current playing media."""
-        return self._state.title
+        return self._state.media_title
 
     async def async_update(self):
         """Fetch state from the device."""
