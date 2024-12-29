@@ -26,4 +26,4 @@ class NaimApiClient:
                     data = await response.json()
                     return data.get(variable)
         except aiohttp.ClientError as error:
-            raise NaimConnectionError(f"Failed to get {variable} from {endpoint}: {error}")
+            raise NaimConnectionError(f"Failed to get {variable} from {endpoint}: {error}") from error

@@ -43,10 +43,10 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     writer.close()
                     await writer.wait_closed()
-                except asyncio.TimeoutError:
-                    raise ConfigEntryNotReady("Device not responding")
+                except asyncio.TimeoutError as err:
+                    raise ConfigEntryNotReady("Device not responding") from err
                 except OSError as err:
-                    raise ConfigEntryNotReady(f"Connection failed: {err}")
+                    raise ConfigEntryNotReady(f"Connection failed: {err}") from err
 
                 # Create unique ID based on IP
                 await self.async_set_unique_id(user_input[CONF_IP_ADDRESS])

@@ -503,7 +503,8 @@ class NaimPlayer(MediaPlayerEntity):
                 playing_state=NAIM_TRANSPORT_STATE_TO_HA_STATE.get(transport_state, MediaPlayerState.ON),
             )
         _LOGGER.debug(
-            f"Power state updated to {self._state.power_state}, playing state to {self._state.playing_state} for {self._name}"
+            f"Power state updated to {self._state.power_state}, "
+            f"playing state to {self._state.playing_state} for {self._name}"
         )
 
     async def async_mute_volume(self, mute):
