@@ -1,15 +1,18 @@
 """Global fixtures for naim_media_player integration."""
+
 from unittest.mock import patch
 
 import pytest
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
+
 # This fixture is used to prevent HomeAssistant from attempting to load our custom integration
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Enable custom integrations in Home Assistant."""
     yield
+
 
 # This fixture, when used, will result in calls to async_get_data to return None. To have the call
 # return a value, we would add that value in the mock.
