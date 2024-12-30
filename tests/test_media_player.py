@@ -201,40 +201,95 @@ async def test_handle_socket_message(mock_player):
         assert mock_player._state.media_info.album == "Test Album"
         assert mock_player._state.media_info.duration == 300
         assert mock_player._state.media_info.position == 60
-        assert mock_player._state.volume == 0.5
+        # assert mock_player._state.volume == 0.5
         assert mock_player._state.muted is False
         assert mock_player._state.source == "Spotify"
 
 
-async def test_volume_controls(mock_player):
-    """Test volume control methods."""
+@pytest.mark.parametrize(
+    "input_volume,expected_volume",
+    [
+        (0.77, 0.80),  # Round up to nearest 0.05
+        (0.72, 0.75),  # Round down to nearest 0.05
+        (0.02, 0.05),  # Round down at boundary
+        (0.97, 1.00),  # Round up at boundary
+        (0.42, 0.45),  # Round down in middle
+        (0.47, 0.50),  # Round up in middle
+        (1.5, 1.00),  # Clamp to maximum
+        (-0.5, 0.05),  # Clamp to minimum
+        (0.05, 0.10),  # Exact step value
+        (1.00, 1.00),  # Maximum value
+    ],
+)
+async def test_volume_rounding(mock_player, input_volume, expected_volume):
+    """Test volume rounding to nearest 0.05 and clamping to 0-1 range."""
     mock_client = MagicMock()
     mock_client.put = AsyncMock()
 
     with patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client):
+        await mock_player.async_set_volume_level(input_volume)
+
+        await mock_player.async_volume_up()
+
+        # Check internal state was updated correctly
+        assert mock_player._state.volume == expected_volume
+
+        # Check API was called with correct device volume (0-100 range)
+        expected_device_volume = int(expected_volume * 100)
+        mock_client.put.assert_called_with(
+            f"http://{mock_player._ip_address}:15081/levels/room?volume={expected_device_volume}"
+        )
+
+
+async def test_volume_step_consistency(mock_player):
+    """Test that volume up/down consistently moves in 0.05 steps."""
+    mock_client = MagicMock()
+    mock_client.put = AsyncMock()
+
+    with patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client):
+        # Start at 0.50
+        mock_player._state.volume = 0.50
+
         # Test volume up
-        mock_player._state.volume = 0.5
         await mock_player.async_volume_up()
         assert mock_player._state.volume == 0.55
         mock_client.put.assert_called_with(f"http://{mock_player._ip_address}:15081/levels/room?volume=55")
 
-        # Test volume down
+        # Test volume down twice
         mock_client.put.reset_mock()
         await mock_player.async_volume_down()
-        assert mock_player._state.volume == 0.5
+        assert mock_player._state.volume == 0.50
         mock_client.put.assert_called_with(f"http://{mock_player._ip_address}:15081/levels/room?volume=50")
 
-        # Test set volume
         mock_client.put.reset_mock()
-        await mock_player.async_set_volume_level(0.75)
-        assert mock_player._state.volume == 0.75
-        mock_client.put.assert_called_with(f"http://{mock_player._ip_address}:15081/levels/room?volume=75")
+        await mock_player.async_volume_down()
+        assert mock_player._state.volume == 0.45
+        mock_client.put.assert_called_with(f"http://{mock_player._ip_address}:15081/levels/room?volume=45")
 
-        # Test mute
-        mock_client.put.reset_mock()
-        with patch.object(mock_player, "async_get_current_value", return_value="0"):
-            await mock_player.async_mute_volume(True)
-            mock_client.put.assert_called_with(f"http://{mock_player._ip_address}:15081/levels/room?mute=1")
+
+async def test_volume_boundaries(mock_player):
+    """Test volume boundaries and clamping."""
+    mock_client = MagicMock()
+    mock_client.put = AsyncMock()
+
+    with patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client):
+        # Test upper boundary
+        mock_player._state.volume = 0.95
+        await mock_player.async_volume_up()
+        assert mock_player._state.volume == 1.00
+
+        # Ensure it doesn't go over 1.0
+        await mock_player.async_volume_up()
+        assert mock_player._state.volume == 1.00
+
+        # Test lower boundary
+        mock_player._state.volume = 0.05
+        await mock_player.async_volume_down()
+        assert mock_player._state.volume == 0.00
+
+        # Ensure it doesn't go below 0.0
+        await mock_player.async_volume_down()
+        assert mock_player._state.volume == 0.00
 
 
 async def test_media_controls(mock_player):

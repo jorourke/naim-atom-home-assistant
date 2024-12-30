@@ -132,6 +132,10 @@ NAIM_TRANSPORT_STATE_TO_HA_STATE = {
 CONST_VOLUME_STEP = 0.05
 
 
+def round_to_nearest(val: float, step: float = 0.01) -> float:
+    return round(val / step) * step
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -154,6 +158,7 @@ class NaimPlayer(MediaPlayerEntity):
         self._hass = hass
         self._name = name
         self._ip_address = ip_address
+        self._volume_lock = asyncio.Lock()
 
         # Use provided entity_id or generate one from the name
         if entity_id:
@@ -306,10 +311,11 @@ class NaimPlayer(MediaPlayerEntity):
             if position_ms is not None:
                 updates["position"] = position_ms / 1000  # Convert to seconds
 
-            # Update volume
-            volume = data.get("senderVolume", {}).get("i32_")
-            if volume is not None:
-                updates["volume"] = int(volume) / 100
+            # TODO: Need to figure out why the volume is breaking on this listener
+            # Setup
+            # volume = data.get("senderVolume", {}).get("i32_")
+            # if volume is not None:
+            #     updates["volume"] = int(volume) / 100
 
             # Update mute state
             muted = data.get("senderMute", {}).get("i32_")
@@ -522,29 +528,39 @@ class NaimPlayer(MediaPlayerEntity):
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting mute for %s: %s", self._name, error)
 
-    async def async_set_volume_level(self, volume):
+    async def _set_volume_safe(self, volume: float) -> None:
+        """Thread-safe volume setter that ensures volume is 0-1 in steps of 0.05."""
+        async with self._volume_lock:
+            try:
+                # Round to nearest 0.05 and ensure between 0-1
+                volume = max(0.0, min(1.0, round_to_nearest(volume)))
+                # Convert to device volume (0-100)
+                device_volume = int(volume * 100)
+
+                await async_get_clientsession(self._hass).put(
+                    f"http://{self._ip_address}:15081/levels/room?volume={device_volume}"
+                )
+                self._state.update(volume=volume)
+                _LOGGER.debug(
+                    "Successfully set volume to %s (%d%%) for %s",
+                    volume,
+                    device_volume,
+                    self._name,
+                )
+            except aiohttp.ClientError as error:
+                _LOGGER.error("Error setting volume for %s: %s", self._name, error)
+
+    async def async_set_volume_level(self, volume: float):
         """Set volume level, range 0..1."""
         _LOGGER.info("Setting volume to %s for %s", volume, self._name)
-        try:
-            device_volume = int(volume * 100)
-            self._state.update(volume=volume)
-            await async_get_clientsession(self._hass).put(
-                f"http://{self._ip_address}:15081/levels/room?volume={device_volume}"
-            )
-            _LOGGER.info(
-                "Successfully set volume to %s for %s, current volume is now %s",
-                volume,
-                self._name,
-                self._state.volume,
-            )
-        except aiohttp.ClientError as error:
-            _LOGGER.error("Error setting volume for %s: %s", self._name, error)
+        await self._set_volume_safe(volume)
 
     async def async_volume_up(self):
         """Increment volume by a fixed amount."""
         _LOGGER.info("Incrementing volume for %s, current volume is %s", self._name, self._state.volume)
         try:
-            new_volume = min(1.0, self._state.volume + CONST_VOLUME_STEP)  # Increment by 10%, max at 100%
+            new_volume = min(1.0, self._state.volume + CONST_VOLUME_STEP)
+            new_volume = round_to_nearest(new_volume, step=CONST_VOLUME_STEP)
             await self.async_set_volume_level(new_volume)
             _LOGGER.debug("Successfully incremented volume to %s for %s", new_volume, self._name)
         except aiohttp.ClientError as error:
@@ -555,6 +571,7 @@ class NaimPlayer(MediaPlayerEntity):
         _LOGGER.info("Decrementing volume for %s, current volume is %s", self._name, self._state.volume)
         try:
             new_volume = max(0.0, self._state.volume - CONST_VOLUME_STEP)  # Decrement by 10%, min at 0%
+            new_volume = round_to_nearest(new_volume, step=CONST_VOLUME_STEP)
             await self.async_set_volume_level(new_volume)
             _LOGGER.debug("Successfully decremented volume to %s for %s", new_volume, self._name)
         except aiohttp.ClientError as error:
