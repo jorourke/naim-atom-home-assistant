@@ -4,13 +4,32 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
 
 ## Features
 
+### Playback Controls
 - 🎵 Full playback controls (play, pause, next/previous track)
-- 🔊 Volume control and mute functionality
-- 📻 Source selection (Analog, Digital, Bluetooth, Web Radio, Spotify)
-- 🖼️ Album art display
-- 📊 Real-time status updates via WebSocket
-- 🏷️ Track metadata (title, artist, album)
 - ⏱️ Media position and duration tracking
+- 🔊 Volume control with 5% increments
+- 🔇 Mute functionality
+
+### Source Management
+- 📻 Source selection:
+  - Analog 1
+  - Digital 1-3
+  - Bluetooth
+  - Web Radio
+  - Spotify
+
+### Media Information
+- 🖼️ Album art display
+- 🏷️ Rich metadata display:
+  - Track title
+  - Artist name
+  - Album name
+  - Duration
+  - Current position
+
+### Connectivity
+- 📊 Real-time status updates via WebSocket
+- 🔌 Local network control (no cloud dependency)
 
 ## Installation
 
@@ -33,8 +52,13 @@ Follow the config flow when you add it by navigating to the integrations page in
 
 ## Supported Devices
 
+### Fully Tested
 - Naim Atom
-- Other Naim network players may work but are untested
+
+### Should Work (Untested)
+- Naim Streamers that have http api support
+
+Please report your experience with other Naim devices to help expand this list.
 
 ## Available Sources
 
