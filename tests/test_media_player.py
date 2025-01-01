@@ -21,13 +21,8 @@ def mock_player(hass):
     mock_task.done.return_value = True
     mock_task.cancel = MagicMock()
 
-    # Create a mock coroutine that accepts self
-    async def mock_socket_listener(self):
-        return None
-
     with (
         patch("asyncio.create_task", return_value=mock_task),
-        patch.object(NaimPlayer, "_socket_listener", mock_socket_listener),
     ):
         config = {CONF_IP_ADDRESS: "192.168.1.100", CONF_NAME: "Test Naim Player"}
         player = NaimPlayer(hass, config[CONF_NAME], config[CONF_IP_ADDRESS])
@@ -373,3 +368,87 @@ async def test_media_info_properties(mock_player):
     assert mock_player.media_duration == 300
     assert mock_player.media_position == 60
     assert mock_player.media_image_url == "http://example.com/image.jpg"
+
+
+# @pytest.mark.skip(reason="Skipping this test")
+async def test_socket_listener_connection_and_reconnection(mock_player):
+    """Test socket listener connection handling and reconnection logic."""
+    mock_reader = AsyncMock()
+    mock_writer = AsyncMock()
+    mock_writer.close = AsyncMock()
+    mock_writer.wait_closed = AsyncMock()
+
+    connection_attempts = 0
+
+    async def mock_open_connection(*args, **kwargs):
+        nonlocal connection_attempts
+        connection_attempts += 1
+        if connection_attempts == 1:
+            raise ConnectionError("Connection failed")
+        # On second attempt, return the mock reader/writer
+        # but have the reader raise to exit the loop
+        mock_reader.read.side_effect = asyncio.CancelledError()
+        return mock_reader, mock_writer
+
+    with patch("asyncio.open_connection", side_effect=mock_open_connection):
+        # The socket listener will run until we get CancelledError
+        try:
+            await mock_player._socket_listener()
+        except asyncio.CancelledError:
+            pass  # Expected
+
+    # Verify the test
+    assert connection_attempts == 2
+    assert mock_writer.close.called
+    assert mock_writer.wait_closed.called
+
+
+async def test_socket_message_handling_complete_json(mock_player):
+    """Test handling of complete JSON messages from socket."""
+    test_message = {
+        "data": {
+            "state": "playing",
+            "trackRoles": {
+                "title": "Test Song",
+                "icon": "http://example.com/image.jpg",
+                "mediaData": {"metaData": {"artist": "Test Artist", "album": "Test Album"}},
+            },
+            "status": {"duration": 300000},
+            "contextPath": "spotify",
+        },
+        "playTime": {"i64_": 60000},
+        "senderMute": {"i32_": 0},
+    }
+
+    # Instead of testing the socket listener, test the message handler directly
+    await mock_player._handle_socket_message(json.dumps(test_message))
+
+    # Verify state updates
+    assert mock_player._state.playing_state == MediaPlayerState.PLAYING
+    assert mock_player._state.media_info.title == "Test Song"
+    assert mock_player._state.media_info.artist == "Test Artist"
+    assert mock_player._state.media_info.album == "Test Album"
+    assert mock_player._state.media_info.duration == 300
+    assert mock_player._state.media_info.position == 60
+    assert mock_player._state.source == "Spotify"
+
+
+async def test_socket_message_handling_partial_json(mock_player):
+    """Test handling of partial JSON messages from socket."""
+    test_message = {"data": {"state": "playing", "trackRoles": {"title": "Test Song"}}}
+
+    # Test the message handler directly
+    await mock_player._handle_socket_message(json.dumps(test_message))
+
+    # Verify state updates
+    assert mock_player._state.playing_state == MediaPlayerState.PLAYING
+    assert mock_player._state.media_info.title == "Test Song"
+
+
+async def test_socket_message_handling_invalid_json(mock_player):
+    """Test handling of invalid JSON messages from socket."""
+    # Test the message handler directly with invalid JSON
+    await mock_player._handle_socket_message('{"invalid": "json')
+
+    # Verify no state changes occurred
+    assert mock_player._state.playing_state == MediaPlayerState.IDLE

@@ -14,6 +14,7 @@ dependencies = [
     "pytest==8.3.3",
     "pytest-cov>=4.1.0",
     "ruff>=0.8.4",
+    "coverage>=7.6.8",
 ]
 
 [tool.ruff]
@@ -30,7 +31,9 @@ select = [
 ]
 
 
+
 [tool.pytest.ini_options]
+addopts = "--cov=custom_components/naim_media_player --cov-report=html:htmlcov --cov-report=xml:coverage.xml --cov-report=term-missing"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 norecursedirs = [".git"]

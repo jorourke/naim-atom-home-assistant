@@ -533,7 +533,8 @@ class NaimPlayer(MediaPlayerEntity):
         async with self._volume_lock:
             try:
                 # Round to nearest 0.05 and ensure between 0-1
-                volume = max(0.0, min(1.0, round_to_nearest(volume)))
+                volume = max(0.0, min(1.0, volume))
+                volume = round_to_nearest(volume)
                 # Convert to device volume (0-100)
                 device_volume = int(volume * 100)
 
