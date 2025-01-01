@@ -395,7 +395,7 @@ async def test_socket_listener_connection_and_reconnection(mock_player):
         patch("asyncio.sleep", new=AsyncMock()),  # Make any retry delays immediate
     ):
         try:
-            await mock_player._socket_listener()
+            await mock_player._websocket._socket_listener()
         except asyncio.CancelledError:
             pass
 

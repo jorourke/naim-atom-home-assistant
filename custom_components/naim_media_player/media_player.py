@@ -21,6 +21,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
     DEFAULT_NAME,
 )
+from .websocket import NaimWebSocket
 
 PLATFORMS = [Platform.MEDIA_PLAYER]
 
@@ -189,14 +190,17 @@ class NaimPlayer(MediaPlayerEntity):
         self._media_duration = None
         self._media_position = None
         self._media_image_url = None
+        self._socket_reconnect_interval = 5
 
-        # WebSocket connection
-        self._socket_task = None
-        self._socket_reconnect_interval = 5  # seconds
-        self._socket_connected = False
-
+        # Replace the direct socket handling with NaimWebSocket
+        self._websocket = NaimWebSocket(
+            ip_address=self._ip_address,
+            port=4545,
+            message_handler=self._handle_socket_message,
+            reconnect_interval=self._socket_reconnect_interval,
+        )
         # Start WebSocket connection
-        self._socket_task = asyncio.create_task(self._socket_listener())
+        asyncio.create_task(self._websocket.start())
 
     @property
     def supported_features(self) -> int:
@@ -213,61 +217,6 @@ class NaimPlayer(MediaPlayerEntity):
             | MediaPlayerEntityFeature.NEXT_TRACK
             | MediaPlayerEntityFeature.PREVIOUS_TRACK
         )
-
-    async def _socket_listener(self):
-        """Listen to TCP socket updates from the device."""
-        _LOGGER.info("Starting WebSocket listener for %s at %s:4545", self._name, self._ip_address)
-        buffer = ""
-        decoder = json.JSONDecoder()
-        while True:
-            writer = None
-            try:
-                reader, writer = await asyncio.open_connection(self._ip_address, 4545)
-                self._socket_connected = True
-                _LOGGER.info("WebSocket connected successfully to %s:4545", self._ip_address)
-
-                while True:
-                    try:
-                        data = await reader.read(4096)
-                        if not data:
-                            _LOGGER.warning("Connection closed by server")
-                            break
-
-                        buffer += data.decode("utf-8")
-                        while buffer:
-                            try:
-                                # Attempt to decode a JSON object from the buffer
-                                obj, idx = decoder.raw_decode(buffer)
-                                message = buffer[:idx]
-                                buffer = buffer[idx:]
-                                _LOGGER.debug("Parsed JSON object: %s", message)
-                                await self._handle_socket_message(message)
-                            except json.JSONDecodeError:
-                                # Not enough data to decode a full JSON object
-                                break
-                    except Exception as error:
-                        _LOGGER.error("Error receiving data: %s", error)
-                        break
-
-            except Exception as error:
-                self._socket_connected = False
-                _LOGGER.error(
-                    "WebSocket connection failed for %s (%s:4545): %s. Retrying in %s seconds",
-                    self._name,
-                    self._ip_address,
-                    str(error),
-                    self._socket_reconnect_interval,
-                )
-                await asyncio.sleep(self._socket_reconnect_interval)
-
-            finally:
-                self._socket_connected = False
-                if writer is not None:
-                    try:
-                        writer.close()
-                        await writer.wait_closed()
-                    except Exception as error:
-                        _LOGGER.warning("Error closing WebSocket connection: %s", error)
 
     async def _handle_socket_message(self, message):
         """Handle socket message."""
@@ -645,9 +594,4 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def async_will_remove_from_hass(self):
         """Clean up when entity is removed."""
-        if self._socket_task:
-            self._socket_task.cancel()
-            try:
-                await self._socket_task
-            except asyncio.CancelledError:
-                pass
+        await self._websocket.stop()
