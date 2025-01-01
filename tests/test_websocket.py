@@ -44,8 +44,6 @@ async def test_websocket_lifecycle(websocket, mock_message_handler):
 
 async def test_websocket_reconnection(websocket, mock_message_handler):
     """Test WebSocket reconnection on failure."""
-    mock_reader = AsyncMock()
-    mock_writer = AsyncMock()
 
     connection_attempts = 0
 
