@@ -377,6 +377,8 @@ async def test_socket_listener_connection_and_reconnection(mock_player):
     mock_writer = AsyncMock()
     mock_writer.close = AsyncMock()
     mock_writer.wait_closed = AsyncMock()
+    # Make read return immediately with CancelledError
+    mock_reader.read = AsyncMock(side_effect=asyncio.CancelledError())
 
     connection_attempts = 0
 
@@ -385,19 +387,18 @@ async def test_socket_listener_connection_and_reconnection(mock_player):
         connection_attempts += 1
         if connection_attempts == 1:
             raise ConnectionError("Connection failed")
-        # On second attempt, return the mock reader/writer
-        # but have the reader raise to exit the loop
-        mock_reader.read.side_effect = asyncio.CancelledError()
         return mock_reader, mock_writer
 
-    with patch("asyncio.open_connection", side_effect=mock_open_connection):
-        # The socket listener will run until we get CancelledError
+    # Patch both the connection and any retry delays
+    with (
+        patch("asyncio.open_connection", side_effect=mock_open_connection),
+        patch("asyncio.sleep", new=AsyncMock()),  # Make any retry delays immediate
+    ):
         try:
             await mock_player._socket_listener()
         except asyncio.CancelledError:
-            pass  # Expected
+            pass
 
-    # Verify the test
     assert connection_attempts == 2
     assert mock_writer.close.called
     assert mock_writer.wait_closed.called
