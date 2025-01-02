@@ -46,6 +46,7 @@ class NaimPlayerState:
 
     def __init__(self):
         """Initialize state."""
+        self._lock = asyncio.Lock()
         self.power_state = MediaPlayerState.OFF
         self.playing_state = MediaPlayerState.IDLE
         self.volume = 0.0
@@ -53,14 +54,15 @@ class NaimPlayerState:
         self.source = None
         self.media_info = MediaInfo()
 
-    def update(self, **kwargs):
+    async def update(self, **kwargs):
         """Update state attributes."""
-        for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            # Handle nested media_info updates
-            elif hasattr(self.media_info, key):
-                setattr(self.media_info, key, value)
+        async with self._lock:
+            for key, value in kwargs.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
+                # Handle nested media_info updates
+                elif hasattr(self.media_info, key):
+                    setattr(self.media_info, key, value)
 
     @property
     def state(self) -> MediaPlayerState:
@@ -159,7 +161,6 @@ class NaimPlayer(MediaPlayerEntity):
         self._hass = hass
         self._name = name
         self._ip_address = ip_address
-        self._volume_lock = asyncio.Lock()
 
         # Use provided entity_id or generate one from the name
         if entity_id:
@@ -279,7 +280,7 @@ class NaimPlayer(MediaPlayerEntity):
                 updates["source"] = source
 
             # Update state object with all changes
-            self._state.update(**updates)
+            await self._state.update(**updates)
             self.async_write_ha_state()
 
         except json.JSONDecodeError as error:
@@ -384,10 +385,10 @@ class NaimPlayer(MediaPlayerEntity):
             # Get power state
             power = await self.async_get_current_value("http://{ip}:15081/power", "system")
             if power == "lona":
-                self._state.update(power_state=MediaPlayerState.OFF)
+                await self._state.update(power_state=MediaPlayerState.OFF)
             elif power == "on":
                 transport_state = await self.async_get_current_value("http://{ip}:15081/nowplaying", "transportState")
-                self._state.update(
+                await self._state.update(
                     power_state=MediaPlayerState.ON,
                     playing_state=NAIM_TRANSPORT_STATE_TO_HA_STATE.get(transport_state, MediaPlayerState.ON),
                 )
@@ -395,12 +396,12 @@ class NaimPlayer(MediaPlayerEntity):
             # Get volume
             volume = await self.async_get_current_value("http://{ip}:15081/levels/room", "volume")
             if volume is not None:
-                self._state.update(volume=int(volume) / 100)
+                await self._state.update(volume=int(volume) / 100)
 
             # Get mute state
             mute = await self.async_get_current_value("http://{ip}:15081/levels/room", "mute")
             if mute is not None:
-                self._state.update(muted=bool(int(mute)))
+                await self._state.update(muted=bool(int(mute)))
 
             # Update media info
             await self.update_media_info()
@@ -423,7 +424,7 @@ class NaimPlayer(MediaPlayerEntity):
         if device_source:
             updates["source"] = next((k for k, v in self._source_map.items() if v == device_source), self._state.source)
 
-        self._state.update(**updates)
+        await self._state.update(**updates)
 
     async def async_turn_on(self):
         """Turn the media player on."""
@@ -450,10 +451,10 @@ class NaimPlayer(MediaPlayerEntity):
         _LOGGER.info("Updating state for %s", self._name)
         state = await self.async_get_current_value("http://{ip}:15081/power", "system")
         if state == "lona":
-            self._state.update(power_state=MediaPlayerState.OFF)
+            await self._state.update(power_state=MediaPlayerState.OFF)
         elif state == "on":
             transport_state = await self.async_get_current_value("http://{ip}:15081/nowplaying", "transportState")
-            self._state.update(
+            await self._state.update(
                 power_state=MediaPlayerState.ON,
                 playing_state=NAIM_TRANSPORT_STATE_TO_HA_STATE.get(transport_state, MediaPlayerState.ON),
             )
@@ -468,42 +469,40 @@ class NaimPlayer(MediaPlayerEntity):
         try:
             current_mute = await self.async_get_current_value("http://{ip}:15081/levels/room", "mute")
             if current_mute is not None:
-                value = int(not (int(current_mute) > 0))
+                # Use the mute parameter directly instead of toggling
+                mute_value = int(bool(mute))
                 await async_get_clientsession(self._hass).put(
-                    f"http://{self._ip_address}:15081/levels/room?mute={value}"
+                    f"http://{self._ip_address}:15081/levels/room?mute={mute_value}"
                 )
-                self._state.update(muted=bool(value))
+                await self._state.update(muted=bool(mute_value))
                 _LOGGER.debug("Successfully set mute to %s for %s", self._state.muted, self._name)
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting mute for %s: %s", self._name, error)
 
-    async def _set_volume_safe(self, volume: float) -> None:
-        """Thread-safe volume setter that ensures volume is 0-1 in steps of 0.05."""
-        async with self._volume_lock:
-            try:
-                # Round to nearest 0.05 and ensure between 0-1
-                volume = max(0.0, min(1.0, volume))
-                volume = round_to_nearest(volume)
-                # Convert to device volume (0-100)
-                device_volume = int(volume * 100)
+    async def _set_volume(self, volume: float) -> None:
+        try:
+            # Round to nearest 0.05 and ensure between 0-1
+            volume = max(0.0, min(1.0, volume))
+            volume = round_to_nearest(volume)
+            device_volume = int(volume * 100)
 
-                await async_get_clientsession(self._hass).put(
-                    f"http://{self._ip_address}:15081/levels/room?volume={device_volume}"
-                )
-                self._state.update(volume=volume)
-                _LOGGER.debug(
-                    "Successfully set volume to %s (%d%%) for %s",
-                    volume,
-                    device_volume,
-                    self._name,
-                )
-            except aiohttp.ClientError as error:
-                _LOGGER.error("Error setting volume for %s: %s", self._name, error)
+            await async_get_clientsession(self._hass).put(
+                f"http://{self._ip_address}:15081/levels/room?volume={device_volume}"
+            )
+            await self._state.update(volume=volume)
+            _LOGGER.debug(
+                "Successfully set volume to %s (%d%%) for %s",
+                volume,
+                device_volume,
+                self._name,
+            )
+        except aiohttp.ClientError as error:
+            _LOGGER.error("Error setting volume for %s: %s", self._name, error)
 
     async def async_set_volume_level(self, volume: float):
         """Set volume level, range 0..1."""
         _LOGGER.info("Setting volume to %s for %s", volume, self._name)
-        await self._set_volume_safe(volume)
+        await self._set_volume(volume)
 
     async def async_volume_up(self):
         """Increment volume by a fixed amount."""
@@ -536,7 +535,7 @@ class NaimPlayer(MediaPlayerEntity):
                 await async_get_clientsession(self._hass).get(
                     f"http://{self._ip_address}:15081/inputs/{input_id}?cmd=select"
                 )
-                self._state.update(source=source)
+                await self._state.update(source=source)
                 _LOGGER.debug("Successfully selected source %s for %s", source, self._name)
             except aiohttp.ClientError as error:
                 _LOGGER.error("Error selecting source for %s: %s", self._name, error)
@@ -586,7 +585,7 @@ class NaimPlayer(MediaPlayerEntity):
             await async_get_clientsession(self._hass).get(
                 f"http://{self._ip_address}:15081/nowplaying?cmd=seek&position={position_ms}"
             )
-            self._state.update(position=position)
+            await self._state.update(position=position)
             _LOGGER.debug("Successfully seeked to position %s for %s", position, self._name)
 
         except aiohttp.ClientError as error:
