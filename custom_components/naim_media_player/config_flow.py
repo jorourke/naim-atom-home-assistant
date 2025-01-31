@@ -58,7 +58,7 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ConfigEntryNotReady as err:
                 _LOGGER.error("Error connecting to device: %s", err)
                 errors["base"] = "cannot_connect"
-            except vol.MultipleInvalid as error:
+            except vol.Invalid as error:
                 _LOGGER.exception("Invalid volume step: %s", error)
                 errors["base"] = "invalid_volume_step"
             except Exception as error:
