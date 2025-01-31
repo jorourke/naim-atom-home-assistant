@@ -8,7 +8,12 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.core import HomeAssistant
 
-from custom_components.naim_media_player.const import DEFAULT_NAME, DOMAIN
+from custom_components.naim_media_player.const import (
+    CONF_VOLUME_STEP,
+    DEFAULT_NAME,
+    DEFAULT_VOLUME_STEP,
+    DOMAIN,
+)
 
 
 async def test_form(hass: HomeAssistant) -> None:
@@ -30,6 +35,7 @@ async def test_form(hass: HomeAssistant) -> None:
                 CONF_IP_ADDRESS: "192.168.1.100",
                 CONF_NAME: "Test Naim",
                 "entity_id": "test_naim",
+                CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
             },
         )
         await hass.async_block_till_done()
@@ -40,6 +46,7 @@ async def test_form(hass: HomeAssistant) -> None:
         CONF_IP_ADDRESS: "192.168.1.100",
         CONF_NAME: "Test Naim",
         "entity_id": "test_naim",
+        CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
     }
 
 
@@ -57,6 +64,7 @@ async def test_form_cannot_connect(hass: HomeAssistant) -> None:
                 CONF_IP_ADDRESS: "192.168.1.100",
                 CONF_NAME: DEFAULT_NAME,
                 "entity_id": "test_naim",
+                CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
             },
         )
 
@@ -78,6 +86,7 @@ async def test_form_unknown_error(hass: HomeAssistant) -> None:
                 CONF_IP_ADDRESS: "192.168.1.100",
                 CONF_NAME: DEFAULT_NAME,
                 "entity_id": "test_naim",
+                CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
             },
         )
 

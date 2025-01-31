@@ -12,7 +12,7 @@ from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DEFAULT_NAME, DOMAIN
+from .const import CONF_VOLUME_STEP, DEFAULT_NAME, DEFAULT_VOLUME_STEP, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_IP_ADDRESS: "192.168.1.127",  # Example default IP
             CONF_NAME: DEFAULT_NAME,
             "entity_id": "naim_atom",  # Example default entity_id
+            CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
         }
 
         if user_input is not None:
@@ -71,6 +72,9 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
                     vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
                     vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
+                    vol.Optional(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
+                        vol.Coerce(float), vol.Range(min=1, max=25)
+                    ),
                 }
             ),
             errors=errors,

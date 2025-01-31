@@ -5,12 +5,14 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
 ## Features
 
 ### Playback Controls
+
 - 🎵 Full playback controls (play, pause, next/previous track)
 - ⏱️ Media position and duration tracking
 - 🔊 Volume control with 5% increments
 - 🔇 Mute functionality
 
 ### Source Management
+
 - 📻 Source selection:
   - Analog 1
   - Digital 1-3
@@ -19,6 +21,7 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
   - Spotify
 
 ### Media Information
+
 - 🖼️ Album art display
 - 🏷️ Rich metadata display:
   - Track title
@@ -28,6 +31,7 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
   - Current position
 
 ### Connectivity
+
 - 📊 Real-time status updates via WebSocket
 - 🔌 Local network control (no cloud dependency)
 
@@ -49,13 +53,14 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
 
 Follow the config flow when you add it by navigating to the integrations page in Home Assistant, then search for "Naim Media Player", then enter the IP address of your Naim device, the name you choose and an optional entity name.
 
-
 ## Supported Devices
 
 ### Fully Tested
+
 - Naim Atom
 
 ### Should Work (Untested)
+
 - Naim Streamers that have http api support
 
 Please report your experience with other Naim devices to help expand this list.
@@ -71,6 +76,7 @@ Please report your experience with other Naim devices to help expand this list.
 - Spotify
 
 ## Example UI
+
 <img src="images/media_player.png" width="400">
 
 ## Debugging

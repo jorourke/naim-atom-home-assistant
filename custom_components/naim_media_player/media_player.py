@@ -19,7 +19,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
+    CONF_VOLUME_STEP,
     DEFAULT_NAME,
+    DEFAULT_VOLUME_STEP,
 )
 from .websocket import NaimWebSocket
 
@@ -148,19 +150,30 @@ async def async_setup_entry(
     ip_address = entry.data[CONF_IP_ADDRESS]
     name = entry.data.get(CONF_NAME, DEFAULT_NAME)
     entity_id = entry.data.get("entity_id")
+    volume_step = entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP)
 
-    async_add_entities([NaimPlayer(hass, name, ip_address, entity_id)], True)
+    async_add_entities([NaimPlayer(hass, name, ip_address, entity_id, volume_step)], True)
 
 
 class NaimPlayer(MediaPlayerEntity):
     """Representation of a Naim Player."""
 
-    def __init__(self, hass: HomeAssistant, name: str, ip_address: str, entity_id: str | None = None):
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        name: str,
+        ip_address: str,
+        entity_id: str | None = None,
+        volume_step: float = DEFAULT_VOLUME_STEP,
+    ):
         """Initialize the media player."""
         _LOGGER.info("Initializing Naim Control media player: %s at %s", name, ip_address)
         self._hass = hass
         self._name = name
         self._ip_address = ip_address
+        # It's a percentage, so we need to divide by 100, whereas for the user, it's easier
+        # to work in 1-100
+        self._volume_step = volume_step / 100
 
         # Use provided entity_id or generate one from the name
         if entity_id:
@@ -508,8 +521,8 @@ class NaimPlayer(MediaPlayerEntity):
         """Increment volume by a fixed amount."""
         _LOGGER.info("Incrementing volume for %s, current volume is %s", self._name, self._state.volume)
         try:
-            new_volume = min(1.0, self._state.volume + CONST_VOLUME_STEP)
-            new_volume = round_to_nearest(new_volume, step=CONST_VOLUME_STEP)
+            new_volume = min(1.0, self._state.volume + self._volume_step)
+            new_volume = round_to_nearest(new_volume, step=self._volume_step)
             await self.async_set_volume_level(new_volume)
             _LOGGER.debug("Successfully incremented volume to %s for %s", new_volume, self._name)
         except aiohttp.ClientError as error:
@@ -519,8 +532,8 @@ class NaimPlayer(MediaPlayerEntity):
         """Decrement volume by a fixed amount."""
         _LOGGER.info("Decrementing volume for %s, current volume is %s", self._name, self._state.volume)
         try:
-            new_volume = max(0.0, self._state.volume - CONST_VOLUME_STEP)  # Decrement by 10%, min at 0%
-            new_volume = round_to_nearest(new_volume, step=CONST_VOLUME_STEP)
+            new_volume = max(0.0, self._state.volume - self._volume_step)  # Decrement by 10%, min at 0%
+            new_volume = round_to_nearest(new_volume, step=self._volume_step)
             await self.async_set_volume_level(new_volume)
             _LOGGER.debug("Successfully decremented volume to %s for %s", new_volume, self._name)
         except aiohttp.ClientError as error:
