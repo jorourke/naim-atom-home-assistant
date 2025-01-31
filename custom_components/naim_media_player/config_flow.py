@@ -58,6 +58,9 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ConfigEntryNotReady as err:
                 _LOGGER.error("Error connecting to device: %s", err)
                 errors["base"] = "cannot_connect"
+            except vol.MultipleInvalid as error:
+                _LOGGER.exception("Invalid volume step: %s", error)
+                errors["base"] = "invalid_volume_step"
             except Exception as error:
                 _LOGGER.exception("Unexpected exception: %s", error)
                 errors["base"] = "unknown"
@@ -73,7 +76,7 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
                     vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
                     vol.Optional(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
-                        vol.Coerce(float), vol.Range(min=1, max=25)
+                        vol.Coerce(float), vol.In([1, 5, 10])
                     ),
                 }
             ),

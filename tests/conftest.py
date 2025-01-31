@@ -1,5 +1,7 @@
 """Global fixtures for naim_media_player integration."""
 
+import os
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -21,3 +23,6 @@ def bypass_get_data_fixture():
     """Skip calls to get data from API."""
     with patch("custom_components.naim_media_player.config_flow.validate_input", return_value={"title": "Naim Test"}):
         yield
+
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

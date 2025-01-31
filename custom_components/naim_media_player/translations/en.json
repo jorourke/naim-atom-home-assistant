@@ -7,7 +7,8 @@
               "data": {
                   "ip_address": "IP Address (e.g., 192.168.1.127)",
                   "name": "Name (e.g., Naim Atom)",
-                  "entity_id": "Entity ID (e.g., naim_atom)"
+                  "entity_id": "Entity ID (e.g., naim_atom)",
+                  "volume_step": "Volume Step (e.g., 5)"
               }
           }
       },
@@ -17,7 +18,8 @@
           "invalid_auth": "Invalid authentication",
           "timeout": "Connection timed out",
           "already_configured": "This Naim device is already configured",
-          "invalid_entity_id": "Invalid entity ID"
+          "invalid_entity_id": "Invalid entity ID",
+          "invalid_volume_step": "Volume step must be 1, 5, or 10"
       },
       "abort": {
           "already_configured": "This Naim device is already configured"
