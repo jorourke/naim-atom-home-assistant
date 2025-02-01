@@ -13,7 +13,7 @@ from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import CONF_VOLUME_STEP, DEFAULT_NAME, DEFAULT_VOLUME_STEP, DOMAIN
+from .const import CONF_VOLUME_STEP, DEFAULT_ENTITY_ID, DEFAULT_IP, DEFAULT_NAME, DEFAULT_VOLUME_STEP, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Set up default/suggested values
         suggested_values = {
-            CONF_IP_ADDRESS: "192.168.1.127",  # Example default IP
+            CONF_IP_ADDRESS: DEFAULT_IP,
             CONF_NAME: DEFAULT_NAME,
-            "entity_id": "naim_atom",  # Example default entity_id
+            "entity_id": DEFAULT_ENTITY_ID,
             CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
         }
 
@@ -75,6 +75,8 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except Exception as error:
                     _LOGGER.exception("Unexpected exception: %s", error)
                     errors["base"] = "unknown"
+
+            suggested_values.update(user_input)
 
         # Always return a form (either initial or with errors)
         return self.async_show_form(
