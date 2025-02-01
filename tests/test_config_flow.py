@@ -9,9 +9,11 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.core import HomeAssistant
 
+from custom_components.naim_media_player.config_flow import NaimConfigFlow
 from custom_components.naim_media_player.const import (
     CONF_VOLUME_STEP,
     DEFAULT_NAME,
+    DEFAULT_VOLUME_STEP,
     DOMAIN,
 )
 
@@ -148,3 +150,32 @@ async def test_form_invalid_volume_step(hass: HomeAssistant) -> None:
                 CONF_VOLUME_STEP: 3,  # Invalid value - not in [1, 5, 10]
             },
         )
+
+
+async def test_async_step_user_form(hass: HomeAssistant) -> None:
+    """Test async_step_user returns form with correct defaults."""
+    flow = NaimConfigFlow()
+    flow.hass = hass
+
+    result = await flow.async_step_user()
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+
+    # The defaults are in the key part of
+    schema = result["data_schema"].schema
+    schema_dict = {}
+    for key, _ in schema.items():
+        schema_dict[key] = key.default()
+
+    # Verify default values
+    assert schema_dict[CONF_IP_ADDRESS] == "192.168.1.127"
+    assert schema_dict[CONF_NAME] == DEFAULT_NAME
+    assert schema_dict["entity_id"] == "naim_atom"
+    assert schema_dict[CONF_VOLUME_STEP] == DEFAULT_VOLUME_STEP
+
+    # Verify description placeholders
+    assert result["description_placeholders"] == {
+        "default_ip": "192.168.1.127",
+        "default_name": DEFAULT_NAME,
+    }
