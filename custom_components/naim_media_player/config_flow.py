@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from ipaddress import ip_address
 from typing import Any
 
 import voluptuous as vol
@@ -15,6 +16,14 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from .const import CONF_VOLUME_STEP, DEFAULT_NAME, DEFAULT_VOLUME_STEP, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def valid_ip_address(value: str) -> bool:
+    try:
+        ip_address(value)
+        return True
+    except ValueError:
+        return False
 
 
 class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -35,39 +44,39 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
 
         if user_input is not None:
-            try:
-                # Test connection to the device
+            # First validate IP format
+            if not valid_ip_address(user_input[CONF_IP_ADDRESS]):
+                errors["base"] = "invalid_ip"
+            else:
                 try:
-                    reader, writer = await asyncio.wait_for(
-                        asyncio.open_connection(user_input[CONF_IP_ADDRESS], 4545),
-                        timeout=10,  # 10 second timeout
-                    )
-                    writer.close()
-                    await writer.wait_closed()
-                except asyncio.TimeoutError as err:
-                    raise ConfigEntryNotReady("Device not responding") from err
-                except OSError as err:
-                    raise ConfigEntryNotReady(f"Connection failed: {err}") from err
+                    # Test connection to the device
+                    try:
+                        reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(user_input[CONF_IP_ADDRESS], 4545),
+                            timeout=10,  # 10 second timeout
+                        )
+                        writer.close()
+                        await writer.wait_closed()
 
-                # Create unique ID based on IP
-                await self.async_set_unique_id(user_input[CONF_IP_ADDRESS])
-                self._abort_if_unique_id_configured()
+                        # Create unique ID based on IP
+                        await self.async_set_unique_id(user_input[CONF_IP_ADDRESS])
+                        self._abort_if_unique_id_configured()
 
-                return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+                        return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
 
-            except ConfigEntryNotReady as err:
-                _LOGGER.error("Error connecting to device: %s", err)
-                errors["base"] = "cannot_connect"
-            except vol.Invalid as error:
-                _LOGGER.exception("Invalid volume step: %s", error)
-                errors["base"] = "invalid_volume_step"
-            except Exception as error:
-                _LOGGER.exception("Unexpected exception: %s", error)
-                errors["base"] = "unknown"
+                    except asyncio.TimeoutError as err:
+                        raise ConfigEntryNotReady("Device not responding") from err
+                    except OSError as err:
+                        raise ConfigEntryNotReady(f"Connection failed: {err}") from err
 
-            # If there were errors, keep the user's input as the suggested values
-            suggested_values.update(user_input)
+                except ConfigEntryNotReady as err:
+                    _LOGGER.error("Error connecting to device: %s", err)
+                    errors["base"] = "cannot_connect"
+                except Exception as error:
+                    _LOGGER.exception("Unexpected exception: %s", error)
+                    errors["base"] = "unknown"
 
+        # Always return a form (either initial or with errors)
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(

@@ -179,3 +179,16 @@ async def test_async_step_user_form(hass: HomeAssistant) -> None:
         "default_ip": "192.168.1.127",
         "default_name": DEFAULT_NAME,
     }
+
+
+async def test_form_invalid_ip_address(hass: HomeAssistant) -> None:
+    """Test we handle invalid IP address."""
+
+    flow = NaimConfigFlow()
+    flow.hass = hass
+
+    result = await flow.async_step_user({"ip_address": "invalid_ip"})
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "invalid_ip"}
