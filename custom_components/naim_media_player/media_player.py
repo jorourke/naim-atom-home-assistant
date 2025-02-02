@@ -235,18 +235,24 @@ class NaimPlayer(MediaPlayerEntity):
     async def _handle_socket_message(self, message):
         """Handle socket message."""
         try:
-            data = json.loads(message)
-            _LOGGER.debug("Parsed socket message data: %s", data)
+            all_state = json.loads(message)
+            state_data = all_state.get("data", {})
+            _LOGGER.info(
+                "Socket message: title='%s', state=%s, audio=%sx%sHz",
+                state_data.get("trackRoles", {}).get("title"),
+                state_data.get("state"),
+                state_data.get("trackRoles", {}).get("mediaData", {}).get("activeResource", {}).get("bitsPerSample"),
+                state_data.get("trackRoles", {}).get("mediaData", {}).get("activeResource", {}).get("sampleFrequency"),
+            )
 
             # Extract the 'data' dictionary
-            live_status = data.get("data", {})
-            _LOGGER.debug("Processing live status data: %s", live_status)
+            _LOGGER.debug("Processing live status data: %s", state_data)
 
             # Create update dictionary
             updates = {}
 
             # Update media info
-            track_roles = live_status.get("trackRoles", {})
+            track_roles = state_data.get("trackRoles", {})
             media_data = track_roles.get("mediaData", {}).get("metaData", {})
 
             updates.update(
@@ -259,37 +265,41 @@ class NaimPlayer(MediaPlayerEntity):
             )
 
             # Update playback state
-            playing_state_str = live_status.get("state")
+            playing_state_str = state_data.get("state")
             updates["playing_state"] = TRANSPORT_STATES_STRING_LOOKUP.get(playing_state_str, MediaPlayerState.IDLE)
 
             # Update media duration and position
-            duration_ms = live_status.get("status", {}).get("duration")
+            duration_ms = state_data.get("status", {}).get("duration")
             if duration_ms is not None:
                 try:
+                    _LOGGER.debug(f"Setting duration to: {duration_ms}")
                     updates["duration"] = float(duration_ms) / 1000  # Convert to seconds
                 except (ValueError, TypeError):
                     _LOGGER.warning("Invalid media duration value received: %s", duration_ms)
 
-            position_ms = data.get("playTime", {}).get("i64_")
+            position_ms = all_state.get("playTime", {}).get("i64_")
             if position_ms is not None:
+                _LOGGER.debug(f"Setting position to: {position_ms}")
                 updates["position"] = position_ms / 1000  # Convert to seconds
 
-            # TODO: Need to figure out why the volume is breaking on this listener
-            # Setup
-            # volume = data.get("senderVolume", {}).get("i32_")
+            # TODO: Sender volume is not updating when, say, I change the volume
+            # on the spotify app. For example the value that is coming back can remain stuck
+            # for the payload here in the websocket payload.
+            # volume = all_state.get("senderVolume", {}).get("i32_")
             # if volume is not None:
+            #     _LOGGER.debug(f"Updating state of volume to: {volume}")
             #     updates["volume"] = int(volume) / 100
 
             # Update mute state
-            muted = data.get("senderMute", {}).get("i32_")
+            muted = all_state.get("senderMute", {}).get("i32_")
             if muted is not None:
+                _LOGGER.debug(f"Setting mute to: {muted}")
                 updates["muted"] = bool(int(muted))
 
             # Update source
-            source = live_status.get("contextPath")
-            if source is not None:
-                if source.startswith("spotify"):
-                    source = "Spotify"
+            source = self.get_source(state_data)
+            if source:
+                _LOGGER.debug(f"Setting source to: {source}")
                 updates["source"] = source
 
             # Update state object with all changes
@@ -300,6 +310,16 @@ class NaimPlayer(MediaPlayerEntity):
             _LOGGER.error("Error parsing socket message for %s: %s", self._name, error)
         except Exception as error:
             _LOGGER.error("Error handling socket message for %s: %s", self._name, error)
+
+    def get_source(self, live_status):
+        """Get source from live status."""
+        source = live_status.get("mediaRoles", {}).get("title", None)
+        if not source:
+            source = live_status.get("contextPath")
+            if source is not None:
+                if source.startswith("spotify"):
+                    source = "Spotify"
+        return source
 
     async def async_get_current_value(self, url_pattern, variable):
         """Get current value from device API."""
