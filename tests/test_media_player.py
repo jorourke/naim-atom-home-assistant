@@ -63,6 +63,7 @@ async def test_source_list(mock_player):
         "Bluetooth",
         "Web Radio",
         "Spotify",
+        "Roon",
     ]
     assert mock_player.source_list == expected_sources
 

@@ -196,8 +196,15 @@ class NaimPlayer(MediaPlayerEntity):
             "Bluetooth": "bluetooth",
             "Web Radio": "radio",
             "Spotify": "spotify",
+            # Roon is typically not selectable via this API but can be a reported source.
+            "Roon": "roon",
         }
         self._source_list = list(self._source_map.keys())
+        # Ensure "Roon" is in the source list for display purposes,
+        # even if not directly selectable through the Naim API in the same way.
+        if "Roon" not in self._source_list:
+            self._source_list.append("Roon")
+
         self._media_title = None
         self._media_artist = None
         self._media_album_name = None
@@ -313,12 +320,22 @@ class NaimPlayer(MediaPlayerEntity):
 
     def get_source(self, live_status):
         """Get source from live status."""
+        # Try to get source from Roon specific field first
+        media_roles_data = live_status.get("mediaRoles", {})
+        if media_roles_data:
+            meta_data = media_roles_data.get("mediaData", {}).get("metaData", {})
+            if meta_data.get("serviceID") == "roon":
+                return "Roon"
+
         source = live_status.get("mediaRoles", {}).get("title", None)
         if not source:
             source = live_status.get("contextPath")
             if source is not None:
                 if source.startswith("spotify"):
                     source = "Spotify"
+        # Add a more generic way to map known Naim source identifiers if possible
+        # For now, this handles Spotify and the direct title from mediaRoles.
+        # If the source is still None, or not recognized, it might be an unknown input.
         return source
 
     async def async_get_current_value(self, url_pattern, variable):
