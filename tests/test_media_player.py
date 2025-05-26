@@ -64,6 +64,7 @@ async def test_source_list(mock_player):
         "Web Radio",
         "Spotify",
         "Roon",
+        "HDMI",
     ]
     assert mock_player.source_list == expected_sources
 
@@ -222,7 +223,10 @@ async def test_volume_rounding(mock_player, input_volume, expected_volume):
     mock_client = MagicMock()
     mock_client.put = AsyncMock()
 
-    with patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client):
+    with (
+        patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client),
+        patch.object(mock_player, "async_write_ha_state"),
+    ):
         await mock_player.async_set_volume_level(input_volume)
 
         await mock_player.async_volume_up()
@@ -242,7 +246,10 @@ async def test_volume_step_consistency(mock_player):
     mock_client = MagicMock()
     mock_client.put = AsyncMock()
 
-    with patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client):
+    with (
+        patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client),
+        patch.object(mock_player, "async_write_ha_state"),
+    ):
         # Start at 0.50
         mock_player._state.volume = 0.50
 
@@ -268,7 +275,10 @@ async def test_volume_boundaries(mock_player):
     mock_client = MagicMock()
     mock_client.put = AsyncMock()
 
-    with patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client):
+    with (
+        patch("custom_components.naim_media_player.media_player.async_get_clientsession", return_value=mock_client),
+        patch.object(mock_player, "async_write_ha_state"),
+    ):
         # Test upper boundary
         mock_player._state.volume = 0.95
         await mock_player.async_volume_up()

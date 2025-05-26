@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import string
+import time
 from enum import Enum, IntEnum
 
 import aiohttp
@@ -198,6 +199,7 @@ class NaimPlayer(MediaPlayerEntity):
             "Spotify": "spotify",
             # Roon is typically not selectable via this API but can be a reported source.
             "Roon": "roon",
+            "HDMI": "hdmi",
         }
         self._source_list = list(self._source_map.keys())
         # Ensure "Roon" is in the source list for display purposes,
@@ -223,6 +225,13 @@ class NaimPlayer(MediaPlayerEntity):
         # Start WebSocket connection
         asyncio.create_task(self._websocket.start())
 
+        # Add debounce tracking for user actions
+        self._last_user_mute_action = 0
+        self._last_user_volume_action = 0
+        self._debounce_timeout = 2.0  # Ignore WebSocket updates for 2 seconds after user action
+        self._last_update_call = 0
+        self._update_debounce_timeout = 1.0  # Prevent async_update from running too frequently
+
     @property
     def supported_features(self) -> int:
         """Flag media player features that are supported."""
@@ -239,12 +248,29 @@ class NaimPlayer(MediaPlayerEntity):
             | MediaPlayerEntityFeature.PREVIOUS_TRACK
         )
 
+    def _should_update(self, attribute: str, current_time: float) -> bool:
+        """Check if an attribute should be updated based on debounce timers.
+
+        Args:
+            attribute: The attribute to check ('volume', 'mute', etc.)
+            current_time: The current timestamp
+
+        Returns:
+            True if the attribute should be updated, False if it's within debounce period
+        """
+        if attribute == "volume":
+            return current_time - self._last_user_volume_action > self._debounce_timeout
+        elif attribute == "mute":
+            return current_time - self._last_user_mute_action > self._debounce_timeout
+        # Add more attributes here as needed
+        return True  # Default to allowing updates for unknown attributes
+
     async def _handle_socket_message(self, message):
         """Handle socket message."""
         try:
             all_state = json.loads(message)
             state_data = all_state.get("data", {})
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Socket message: title='%s', state=%s, audio=%sx%sHz",
                 state_data.get("trackRoles", {}).get("title"),
                 state_data.get("state"),
@@ -288,20 +314,6 @@ class NaimPlayer(MediaPlayerEntity):
             if position_ms is not None:
                 _LOGGER.debug(f"Setting position to: {position_ms}")
                 updates["position"] = position_ms / 1000  # Convert to seconds
-
-            # TODO: Sender volume is not updating when, say, I change the volume
-            # on the spotify app. For example the value that is coming back can remain stuck
-            # for the payload here in the websocket payload.
-            # volume = all_state.get("senderVolume", {}).get("i32_")
-            # if volume is not None:
-            #     _LOGGER.debug(f"Updating state of volume to: {volume}")
-            #     updates["volume"] = int(volume) / 100
-
-            # Update mute state
-            muted = all_state.get("senderMute", {}).get("i32_")
-            if muted is not None:
-                _LOGGER.debug(f"Setting mute to: {muted}")
-                updates["muted"] = bool(int(muted))
 
             # Update source
             source = self.get_source(state_data)
@@ -430,7 +442,16 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def async_update(self):
         """Fetch state from the device."""
+        current_time = time.time()
+
+        # Debounce rapid update calls
+        if current_time - self._last_update_call < self._update_debounce_timeout:
+            _LOGGER.debug("Skipping update due to debounce for %s", self._name)
+            return
+
+        self._last_update_call = current_time
         _LOGGER.debug("Updating state for %s", self._name)
+
         try:
             # Get power state
             power = await self.async_get_current_value("http://{ip}:15081/power", "system")
@@ -443,15 +464,17 @@ class NaimPlayer(MediaPlayerEntity):
                     playing_state=NAIM_TRANSPORT_STATE_TO_HA_STATE.get(transport_state, MediaPlayerState.ON),
                 )
 
-            # Get volume
-            volume = await self.async_get_current_value("http://{ip}:15081/levels/room", "volume")
-            if volume is not None:
-                await self._state.update(volume=int(volume) / 100)
+            # Get volume only if not recently changed by user
+            if self._should_update("volume", current_time):
+                volume = await self.async_get_current_value("http://{ip}:15081/levels/room", "volume")
+                if volume is not None:
+                    await self._state.update(volume=int(volume) / 100)
 
-            # Get mute state
-            mute = await self.async_get_current_value("http://{ip}:15081/levels/room", "mute")
-            if mute is not None:
-                await self._state.update(muted=bool(int(mute)))
+            # Get mute state only if not recently changed by user
+            if self._should_update("mute", current_time):
+                mute = await self.async_get_current_value("http://{ip}:15081/levels/room", "mute")
+                if mute is not None:
+                    await self._state.update(muted=bool(int(mute)))
 
             # Update media info
             await self.update_media_info()
@@ -472,6 +495,7 @@ class NaimPlayer(MediaPlayerEntity):
 
         device_source = await self.async_get_current_value("http://{ip}:15081/nowplaying", "source")
         if device_source:
+            _LOGGER.debug("Device source: %s", device_source)
             updates["source"] = next((k for k, v in self._source_map.items() if v == device_source), self._state.source)
 
         await self._state.update(**updates)
@@ -515,19 +539,27 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def async_mute_volume(self, mute):
         """Mute the volume."""
-        _LOGGER.info("Setting mute to %s for %s", mute, self._name)
+        _LOGGER.info("Setting mute to %s for %s (current state: %s)", mute, self._name, self._state.muted)
         try:
-            current_mute = await self.async_get_current_value("http://{ip}:15081/levels/room", "mute")
-            if current_mute is not None:
-                # Use the mute parameter directly instead of toggling
-                mute_value = int(bool(mute))
-                await async_get_clientsession(self._hass).put(
-                    f"http://{self._ip_address}:15081/levels/room?mute={mute_value}"
-                )
-                await self._state.update(muted=bool(mute_value))
-                _LOGGER.debug("Successfully set mute to %s for %s", self._state.muted, self._name)
+            # Record user action timestamp for debounce
+            self._last_user_mute_action = time.time()
+
+            # Immediately update the local state for responsive UI
+            await self._state.update(muted=bool(mute))
+            _LOGGER.info("Updated local mute state to %s", self._state.muted)
+
+            # Then send the command to the device
+            mute_value = int(bool(mute))
+            await async_get_clientsession(self._hass).put(
+                f"http://{self._ip_address}:15081/levels/room?mute={mute_value}"
+            )
+            self.async_write_ha_state()
+            _LOGGER.debug("Successfully sent mute command %s to device", mute_value)
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting mute for %s: %s", self._name, error)
+            # Revert the state if the command failed
+            await self._state.update(muted=not bool(mute))
+            self.async_write_ha_state()
 
     async def _set_volume(self, volume: float) -> None:
         try:
@@ -536,10 +568,18 @@ class NaimPlayer(MediaPlayerEntity):
             volume = round_to_nearest(volume)
             device_volume = int(volume * 100)
 
+            # Record user action timestamp for debounce
+            self._last_user_volume_action = time.time()
+
+            # Immediately update the local state for responsive UI
+            old_volume = self._state.volume
+            await self._state.update(volume=volume)
+            self.async_write_ha_state()
+
+            # Then send the command to the device
             await async_get_clientsession(self._hass).put(
                 f"http://{self._ip_address}:15081/levels/room?volume={device_volume}"
             )
-            await self._state.update(volume=volume)
             _LOGGER.debug(
                 "Successfully set volume to %s (%d%%) for %s",
                 volume,
@@ -548,6 +588,9 @@ class NaimPlayer(MediaPlayerEntity):
             )
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting volume for %s: %s", self._name, error)
+            # Revert the state if the command failed
+            await self._state.update(volume=old_volume)
+            self.async_write_ha_state()
 
     async def async_set_volume_level(self, volume: float):
         """Set volume level, range 0..1."""
