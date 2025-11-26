@@ -1,0 +1,104 @@
+name: Auto Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+jobs:
+  release:
+    # Only run if PR was merged (not just closed) and has a release label
+    if: |
+      github.event.pull_request.merged == true &&
+      (contains(github.event.pull_request.labels.*.name, 'release:major') ||
+       contains(github.event.pull_request.labels.*.name, 'release:minor') ||
+       contains(github.event.pull_request.labels.*.name, 'release:patch'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump type
+        id: bump-type
+        run: |
+          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'release:major') }}" == "true" ]]; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          elif [[ "${{ contains(github.event.pull_request.labels.*.name, 'release:minor') }}" == "true" ]]; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          else
+            echo "type=patch" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get current version
+        id: current-version
+        run: |
+          VERSION=$(jq -r '.version' custom_components/naim_media_player/manifest.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Calculate new version
+        id: new-version
+        run: |
+          CURRENT="${{ steps.current-version.outputs.version }}"
+          BUMP_TYPE="${{ steps.bump-type.outputs.type }}"
+
+          # Split version into parts
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Bump appropriate part
+          case $BUMP_TYPE in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Update manifest.json version
+        run: |
+          NEW_VERSION="${{ steps.new-version.outputs.version }}"
+          jq --arg v "$NEW_VERSION" '.version = $v' custom_components/naim_media_player/manifest.json > tmp.json
+          mv tmp.json custom_components/naim_media_player/manifest.json
+          cat custom_components/naim_media_player/manifest.json
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add custom_components/naim_media_player/manifest.json
+          git commit -m "🔖 chore: bump version to ${{ steps.new-version.outputs.version }}"
+          git push
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.new-version.outputs.version }}
+          name: v${{ steps.new-version.outputs.version }}
+          body: |
+            ## Changes
+
+            ${{ github.event.pull_request.body }}
+
+            ---
+
+            **PR:** #${{ github.event.pull_request.number }}
+            **Merged by:** @${{ github.event.pull_request.merged_by.login }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
