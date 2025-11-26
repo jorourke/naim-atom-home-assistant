@@ -545,6 +545,7 @@ class NaimPlayer(MediaPlayerEntity):
             self._last_user_mute_action = time.time()
 
             # Immediately update the local state for responsive UI
+            old_muted = self._state.muted
             await self._state.update(muted=bool(mute))
             _LOGGER.info("Updated local mute state to %s", self._state.muted)
 
@@ -558,7 +559,7 @@ class NaimPlayer(MediaPlayerEntity):
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting mute for %s: %s", self._name, error)
             # Revert the state if the command failed
-            await self._state.update(muted=not bool(mute))
+            await self._state.update(muted=old_muted)
             self.async_write_ha_state()
 
     async def _set_volume(self, volume: float) -> None:
