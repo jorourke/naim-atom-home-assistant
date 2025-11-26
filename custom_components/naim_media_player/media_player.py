@@ -548,13 +548,13 @@ class NaimPlayer(MediaPlayerEntity):
             old_muted = self._state.muted
             await self._state.update(muted=bool(mute))
             _LOGGER.info("Updated local mute state to %s", self._state.muted)
+            self.async_write_ha_state()
 
             # Then send the command to the device
             mute_value = int(bool(mute))
             await async_get_clientsession(self._hass).put(
                 f"http://{self._ip_address}:15081/levels/room?mute={mute_value}"
             )
-            self.async_write_ha_state()
             _LOGGER.debug("Successfully sent mute command %s to device", mute_value)
         except aiohttp.ClientError as error:
             _LOGGER.error("Error setting mute for %s: %s", self._name, error)

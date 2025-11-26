@@ -47,6 +47,9 @@ class NaimWebSocketClient:
 
         while True:
             writer = None
+            # Clear buffer at the start of each connection attempt to prevent
+            # stale partial JSON data from previous connections
+            self._buffer = ""
             try:
                 reader, writer = await asyncio.open_connection(self.ip_address, self.port)
                 self._connected = True
