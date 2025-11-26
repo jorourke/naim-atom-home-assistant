@@ -25,7 +25,7 @@ Remember to restart Home Assistant after installation.
 
 ## Supported Devices
 * Naim Atom
-* [Add other supported Naim devices here]
+* Other Naim streamers with HTTP API support (untested - please report your experience!)
 
 ## Issues?
 If you're experiencing issues, please [report them](https://github.com/jorourke/naim-atom-home-assistant/issues)

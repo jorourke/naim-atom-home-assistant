@@ -51,7 +51,16 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
 
 ## Configuration
 
-Follow the config flow when you add it by navigating to the integrations page in Home Assistant, then search for "Naim Media Player", then enter the IP address of your Naim device, the name you choose and an optional entity name.
+This integration uses Home Assistant's UI-based configuration flow. No YAML configuration is required.
+
+### Setup Steps
+
+1. Go to **Settings** → **Devices & Services**
+2. Click the **+ ADD INTEGRATION** button
+3. Search for "Naim Media Player"
+4. Enter your device's IP address
+5. Optionally customize the name and entity ID
+6. Click **Submit** - the integration will verify connectivity to your device
 
 ## Supported Devices
 
