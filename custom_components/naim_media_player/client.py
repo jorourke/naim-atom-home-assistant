@@ -86,7 +86,6 @@ class NaimWebSocketClient:
                     str(error),
                     self.reconnect_interval,
                 )
-                await asyncio.sleep(self.reconnect_interval)
 
             finally:
                 self._connected = False
@@ -96,6 +95,10 @@ class NaimWebSocketClient:
                         await writer.wait_closed()
                     except Exception as error:
                         _LOGGER.warning("Error closing WebSocket connection: %s", error)
+
+            # Always delay before reconnecting to avoid hammering the device
+            # This handles both initial connection failures and connection drops
+            await asyncio.sleep(self.reconnect_interval)
 
 
 class NaimApiClient:
