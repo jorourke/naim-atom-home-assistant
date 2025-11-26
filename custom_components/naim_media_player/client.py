@@ -35,9 +35,9 @@ class NaimWebSocketClient:
         if self._task and not self._task.done():
             self._task.cancel()
             try:
-                await asyncio.wait([self._task], timeout=1.0)
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Timeout waiting for websocket to close")
+                done, pending = await asyncio.wait([self._task], timeout=1.0)
+                if pending:
+                    _LOGGER.warning("Timeout waiting for websocket to close")
             except Exception as err:
                 _LOGGER.error("Error stopping websocket: %s", err)
 
