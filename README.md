@@ -16,9 +16,11 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
 - 📻 Source selection:
   - Analog 1
   - Digital 1-3
+  - HDMI
   - Bluetooth
   - Web Radio
   - Spotify
+  - Roon
 
 ### Media Information
 
@@ -80,13 +82,30 @@ Please report your experience with other Naim devices to help expand this list.
 - Digital 1
 - Digital 2
 - Digital 3
+- HDMI
 - Bluetooth
 - Web Radio
 - Spotify
+- Roon
 
 ## Example UI
 
 <img src="images/media_player.png" width="400">
+
+## Changelog
+
+### v0.2.0
+- **Real-time WebSocket Updates**: Live status updates without polling delays
+- **Improved Volume Control**: Debounce mechanism prevents UI feedback loops
+- **Enhanced Reliability**: Robust HTTP API client with better error handling
+- **New Sources**: Added Roon and HDMI support
+
+### v0.1.1
+- **UI Configuration**: Full config flow support for setup via Home Assistant UI
+- **Documentation**: Improved setup instructions
+
+### v0.1.0
+- Initial release
 
 ## Debugging
 
