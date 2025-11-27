@@ -2,7 +2,26 @@
 
 ## Current Tasks
 
-- [ ] Test v0.2.0 release by removing existing Naim setup from Home Assistant and reinstalling via HACS
+- [ ] Test v0.2.0 release without breaking existing setup (see Testing Strategy below)
+- [ ] Clean up orphaned "jatom" entities (jatom 3-218) from previous test runs
+
+## Testing Strategy
+
+**Option 1: Docker Test Instance (Recommended)**
+```bash
+docker run -d \
+  --name homeassistant-test \
+  -p 8124:8123 \
+  -v /path/to/test-config:/config \
+  homeassistant/home-assistant:latest
+```
+Then install dev integration into `/path/to/test-config/custom_components/`.
+
+**Option 2: Home Assistant Dev Container**
+Mount this repo directly into HA dev container and test there.
+
+**Option 3: Add as Second Instance**
+Keep existing working integration, add another config entry pointing to same device IP with different name. Both entities control the same device - if new one breaks, old one still works.
 
 ## Bug Fixes
 

@@ -1,7 +1,6 @@
 """Test the Naim Media Player config flow."""
 
 import asyncio
-import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -192,4 +191,4 @@ async def test_form_invalid_ip_address(hass: HomeAssistant) -> None:
 
     assert result["type"] == "form"
     assert result["step_id"] == "user"
-    assert re.match("invalid_ip_address", result["errors"]["base"])
+    assert result["errors"]["ip_address"] == "invalid_ip_address"

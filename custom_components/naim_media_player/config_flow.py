@@ -42,16 +42,12 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
         }
 
-        # Define a custom validator for IP addresses.
-        def ip_validator(value: str) -> str:
-            if not valid_ip_address(value):
-                raise vol.Invalid("invalid_ip_address")
-            return value
-
         # Create the voluptuous schema.
+        # Note: IP validation is done manually after form submission because
+        # custom validator functions cannot be serialized for the frontend.
         schema = vol.Schema(
             {
-                vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): vol.All(str, ip_validator),
+                vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
                 vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
                 vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
                 vol.Optional(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
@@ -78,6 +74,20 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except vol.Invalid as exc:
             errors["base"] = str(exc)
             # Merge current inputs into suggested values so the form is prefilled.
+            suggested_values.update(user_input)
+            return self.async_show_form(
+                step_id="user",
+                data_schema=schema,
+                errors=errors,
+                description_placeholders={
+                    "default_ip": suggested_values[CONF_IP_ADDRESS],
+                    "default_name": suggested_values[CONF_NAME],
+                },
+            )
+
+        # Validate IP address manually (can't use custom validator in schema for UI serialization)
+        if not valid_ip_address(validated_input[CONF_IP_ADDRESS]):
+            errors[CONF_IP_ADDRESS] = "invalid_ip_address"
             suggested_values.update(user_input)
             return self.async_show_form(
                 step_id="user",
