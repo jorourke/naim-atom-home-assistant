@@ -94,6 +94,11 @@ Please report your experience with other Naim devices to help expand this list.
 
 ## Changelog
 
+### v0.2.2
+- **Improved Offline Handling**: Entity shows as "Unavailable" when device is offline instead of spamming error logs
+- **Reduced Log Noise**: Connection failures now log at DEBUG level instead of ERROR
+- **HTTP Timeout**: Added 5-second timeout to HTTP requests to prevent long hangs during polling
+
 ### v0.2.0
 - **Real-time WebSocket Updates**: Live status updates without polling delays
 - **Improved Volume Control**: Debounce mechanism prevents UI feedback loops

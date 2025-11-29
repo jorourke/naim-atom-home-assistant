@@ -117,7 +117,22 @@ class NaimPlayerState:
 
 **Run tests:**
 ```bash
-pytest tests/
+uv run pytest tests/
+```
+
+**Check formatting:**
+```bash
+uv run ruff format --check custom_components/ tests/
+```
+
+**Fix formatting:**
+```bash
+uv run ruff format custom_components/ tests/
+```
+
+**Run linter:**
+```bash
+uv run ruff check custom_components/ tests/
 ```
 
 **Test structure:**
@@ -335,12 +350,22 @@ Before merging changes:
 
 **Run tests:**
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
-**Check code quality:**
+**Check formatting:**
 ```bash
-# No linting configured yet - use your editor's Python linter
+uv run ruff format --check custom_components/ tests/
+```
+
+**Fix formatting:**
+```bash
+uv run ruff format custom_components/ tests/
+```
+
+**Run linter:**
+```bash
+uv run ruff check custom_components/ tests/
 ```
 
 **Create release:**
