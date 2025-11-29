@@ -9,6 +9,7 @@ import time
 from enum import Enum, IntEnum
 
 import aiohttp
+import aiohttp.client_exceptions
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
@@ -188,6 +189,7 @@ class NaimPlayer(MediaPlayerEntity):
             self.entity_id = f"media_player.{suggested_id}"
 
         self._attr_unique_id = f"naim_{ip_address}"
+        self._attr_available = True  # Track device availability
         self._state = NaimPlayerState()
         self._source_map = {
             "Analog 1": "ana1",
@@ -354,15 +356,17 @@ class NaimPlayer(MediaPlayerEntity):
         """Get current value from device API."""
         try:
             _LOGGER.debug("Getting current value from %s for variable %s", url_pattern, variable)
-            r = await async_get_clientsession(self._hass).get(url_pattern.format(ip=self._ip_address))
+            timeout = aiohttp.ClientTimeout(total=5)
+            r = await async_get_clientsession(self._hass).get(url_pattern.format(ip=self._ip_address), timeout=timeout)
             if r.status == 200:
                 content = await r.text()
                 j = json.loads(content)
                 if variable in j:
                     _LOGGER.debug("Got value %s for variable %s", j[variable], variable)
                     return j[variable]
-        except aiohttp.ClientError as error:
-            _LOGGER.error("Error getting current value: %s", error)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+            # Log as debug since device being offline is expected during normal operation
+            _LOGGER.debug("Cannot reach device at %s: %s", self._ip_address, error)
         return None
 
     @property
@@ -441,7 +445,31 @@ class NaimPlayer(MediaPlayerEntity):
         return self._state.media_title
 
     async def async_update(self):
-        """Fetch state from the device."""
+        """Fetch state from the device via HTTP polling.
+
+        This method is called automatically by Home Assistant's entity platform
+        at a regular interval (default: every 10 seconds for media_player entities).
+        The polling interval is controlled by Home Assistant's SCAN_INTERVAL constant.
+
+        The method serves as a fallback/complement to WebSocket updates:
+        - WebSocket provides real-time updates for playback state, track info, etc.
+        - HTTP polling ensures we catch state changes that WebSocket might miss
+        - HTTP polling also handles device availability detection
+
+        When the device is offline:
+        - The first HTTP request (power check) will fail/timeout
+        - We set _attr_available = False so HA shows entity as "Unavailable"
+        - Subsequent polls continue but log at DEBUG level to avoid log spam
+
+        When the device comes back online:
+        - The power check succeeds and we set _attr_available = True
+        - A single INFO log is emitted to note the state transition
+
+        Debouncing:
+        - User actions (volume, mute) set timestamps to prevent feedback loops
+        - If user just changed volume, we skip polling volume for 2 seconds
+        - This prevents the UI from flickering between user value and device echo
+        """
         current_time = time.time()
 
         # Debounce rapid update calls
@@ -453,8 +481,21 @@ class NaimPlayer(MediaPlayerEntity):
         _LOGGER.debug("Updating state for %s", self._name)
 
         try:
-            # Get power state
+            # Get power state - this is our connectivity check
             power = await self.async_get_current_value("http://{ip}:15081/power", "system")
+
+            if power is None:
+                # Device is unreachable - mark as unavailable
+                if self._attr_available:
+                    _LOGGER.debug("Device %s is now unavailable", self._name)
+                    self._attr_available = False
+                return
+
+            # Device is reachable - mark as available
+            if not self._attr_available:
+                _LOGGER.info("Device %s is now available", self._name)
+                self._attr_available = True
+
             if power == "lona":
                 await self._state.update(power_state=MediaPlayerState.OFF)
             elif power == "on":
@@ -480,7 +521,9 @@ class NaimPlayer(MediaPlayerEntity):
             await self.update_media_info()
 
         except aiohttp.ClientError as error:
-            _LOGGER.error("Error fetching state for %s: %s", self._name, error)
+            _LOGGER.debug("Error fetching state for %s: %s", self._name, error)
+            if self._attr_available:
+                self._attr_available = False
 
     async def update_media_info(self):
         """Update media info from nowplaying endpoint."""

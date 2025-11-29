@@ -69,7 +69,8 @@ class NaimWebSocket:
 
             except Exception as error:
                 self._connected = False
-                _LOGGER.error(
+                # Log as debug since device being offline is expected during normal operation
+                _LOGGER.debug(
                     "WebSocket connection failed (%s:%d): %s. Retrying in %s seconds",
                     self.ip_address,
                     self.port,

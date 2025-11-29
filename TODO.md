@@ -29,12 +29,12 @@ Keep existing working integration, add another config entry pointing to same dev
 - [x] Already fixed in current codebase - close the issue
 
 ### Issue #4: Repeated error messages if Atom is offline
-- [ ] Add `_attr_available` property tracking to `NaimPlayer`
-- [ ] Set `_attr_available = False` when device is unreachable in `async_update`
-- [ ] Set `_attr_available = True` when connection succeeds
-- [ ] Change log level from ERROR to DEBUG/WARNING in `websocket.py:72` for connection failures
-- [ ] Change log level from ERROR to DEBUG in `media_player.py:365` for expected offline states
-- [ ] Add explicit timeout (5s) to HTTP requests in `async_get_current_value`
+- [x] Add `_attr_available` property tracking to `NaimPlayer`
+- [x] Set `_attr_available = False` when device is unreachable in `async_update`
+- [x] Set `_attr_available = True` when connection succeeds
+- [x] Change log level from ERROR to DEBUG/WARNING in `websocket.py:72` for connection failures
+- [x] Change log level from ERROR to DEBUG in `media_player.py:365` for expected offline states
+- [x] Add explicit timeout (5s) to HTTP requests in `async_get_current_value`
 
 ### Issue #5: Lose config after cutting power
 - [ ] Clear `_buffer` on reconnection attempt in `websocket.py:_socket_listener` (add `self._buffer = ""` at start of while loop)
