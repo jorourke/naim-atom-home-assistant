@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
+    CONF_SOURCES,
     CONF_VOLUME_STEP,
     DEFAULT_NAME,
     DEFAULT_VOLUME_STEP,
@@ -154,11 +155,27 @@ async def async_setup_entry(
     entity_id = entry.data.get("entity_id")
     volume_step = entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP)
 
-    async_add_entities([NaimPlayer(hass, name, ip_address, entity_id, volume_step)], True)
+    # Get sources from options first (reconfigured), then data (initial setup), then None (fallback)
+    sources = entry.options.get(CONF_SOURCES) or entry.data.get(CONF_SOURCES)
+
+    async_add_entities([NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources)], True)
 
 
 class NaimPlayer(MediaPlayerEntity):
     """Representation of a Naim Player."""
+
+    # Default source map used when no sources are configured (backwards compatibility)
+    DEFAULT_SOURCE_MAP = {
+        "Analog 1": "ana1",
+        "Digital 1": "dig1",
+        "Digital 2": "dig2",
+        "Digital 3": "dig3",
+        "Bluetooth": "bluetooth",
+        "Web Radio": "radio",
+        "Spotify": "spotify",
+        "Roon": "roon",
+        "HDMI": "hdmi",
+    }
 
     def __init__(
         self,
@@ -167,6 +184,7 @@ class NaimPlayer(MediaPlayerEntity):
         ip_address: str,
         entity_id: str | None = None,
         volume_step: float = DEFAULT_VOLUME_STEP,
+        sources: dict[str, str] | None = None,
     ):
         """Initialize the media player."""
         _LOGGER.info("Initializing Naim Control media player: %s at %s", name, ip_address)
@@ -191,23 +209,16 @@ class NaimPlayer(MediaPlayerEntity):
         self._attr_unique_id = f"naim_{ip_address}"
         self._attr_available = True  # Track device availability
         self._state = NaimPlayerState()
-        self._source_map = {
-            "Analog 1": "ana1",
-            "Digital 1": "dig1",
-            "Digital 2": "dig2",
-            "Digital 3": "dig3",
-            "Bluetooth": "bluetooth",
-            "Web Radio": "radio",
-            "Spotify": "spotify",
-            # Roon is typically not selectable via this API but can be a reported source.
-            "Roon": "roon",
-            "HDMI": "hdmi",
-        }
+
+        # Use configured sources or fall back to defaults
+        if sources:
+            self._source_map = sources
+            _LOGGER.debug("Using configured sources: %s", list(sources.keys()))
+        else:
+            self._source_map = self.DEFAULT_SOURCE_MAP.copy()
+            _LOGGER.debug("Using default source map")
+
         self._source_list = list(self._source_map.keys())
-        # Ensure "Roon" is in the source list for display purposes,
-        # even if not directly selectable through the Naim API in the same way.
-        if "Roon" not in self._source_list:
-            self._source_list.append("Roon")
 
         self._media_title = None
         self._media_artist = None
