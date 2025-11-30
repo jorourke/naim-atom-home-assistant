@@ -10,6 +10,13 @@
                   "entity_id": "Entity ID (e.g., naim_atom)",
                   "volume_step": "Volume Step (e.g., 5)"
               }
+          },
+          "sources": {
+              "title": "Select Sources",
+              "description": "Choose which input sources to show for {device_name}. All discovered sources are selected by default.",
+              "data": {
+                  "sources": "Available Sources"
+              }
           }
       },
       "error": {
@@ -23,6 +30,20 @@
       },
       "abort": {
           "already_configured": "This Naim device is already configured"
+      }
+  },
+  "options": {
+      "step": {
+          "init": {
+              "title": "Configure Sources",
+              "description": "Select which input sources to show for {device_name}.",
+              "data": {
+                  "sources": "Available Sources"
+              }
+          }
+      },
+      "abort": {
+          "cannot_connect": "Cannot connect to device. Please ensure it is powered on and try again."
       }
   }
 }
