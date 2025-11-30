@@ -15,6 +15,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
 from .const import (
     CONF_SOURCES,
@@ -222,7 +223,13 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         source_names = list(self._available_sources.keys())
         schema = vol.Schema(
             {
-                vol.Required(CONF_SOURCES, default=source_names): vol.All(vol.Coerce(list), [vol.In(source_names)]),
+                vol.Required(CONF_SOURCES, default=source_names): SelectSelector(
+                    SelectSelectorConfig(
+                        options=source_names,
+                        multiple=True,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
             }
         )
 
@@ -285,8 +292,12 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
         source_names = list(self._available_sources.keys())
         schema = vol.Schema(
             {
-                vol.Required(CONF_SOURCES, default=current_source_names): vol.All(
-                    vol.Coerce(list), [vol.In(source_names)]
+                vol.Required(CONF_SOURCES, default=current_source_names): SelectSelector(
+                    SelectSelectorConfig(
+                        options=source_names,
+                        multiple=True,
+                        mode=SelectSelectorMode.LIST,
+                    )
                 ),
             }
         )

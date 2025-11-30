@@ -13,14 +13,9 @@ A Home Assistant custom component to control Naim audio devices (like the Naim A
 
 ### Source Management
 
-- 📻 Source selection:
-  - Analog 1
-  - Digital 1-3
-  - HDMI
-  - Bluetooth
-  - Web Radio
-  - Spotify
-  - Roon
+- 📻 Dynamic source discovery from your device
+- ✅ Choose which sources appear in Home Assistant
+- ⚙️ Reconfigure sources anytime via integration options
 
 ### Media Information
 
@@ -63,6 +58,16 @@ This integration uses Home Assistant's UI-based configuration flow. No YAML conf
 4. Enter your device's IP address
 5. Optionally customize the name and entity ID
 6. Click **Submit** - the integration will verify connectivity to your device
+7. Select which input sources you want to appear in Home Assistant
+
+### Reconfiguring Sources
+
+To change which sources are visible after initial setup:
+
+1. Go to **Settings** → **Devices & Services**
+2. Find the Naim Media Player integration
+3. Click **Configure**
+4. Select or deselect sources as needed
 
 ## Supported Devices
 
@@ -76,23 +81,17 @@ This integration uses Home Assistant's UI-based configuration flow. No YAML conf
 
 Please report your experience with other Naim devices to help expand this list.
 
-## Available Sources
-
-- Analog 1
-- Digital 1
-- Digital 2
-- Digital 3
-- HDMI
-- Bluetooth
-- Web Radio
-- Spotify
-- Roon
-
 ## Example UI
 
 <img src="images/media_player.png" width="400">
 
 ## Changelog
+
+### v0.3.0
+- **Dynamic Source Discovery**: Sources are now automatically detected from your Naim device during setup
+- **Source Selection**: Choose which input sources appear in Home Assistant
+- **Options Flow**: Reconfigure sources anytime without removing the integration
+- **Includes all v0.2.2 fixes**
 
 ### v0.2.2
 - **Improved Offline Handling**: Entity shows as "Unavailable" when device is offline instead of spamming error logs
