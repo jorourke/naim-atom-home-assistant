@@ -294,6 +294,11 @@ class NaimPlayer(MediaPlayerEntity):
             # Extract the 'data' dictionary
             _LOGGER.debug("Processing live status data: %s", state_data)
 
+            # Capture state BEFORE updates for comparison
+            old_state = self._state.state
+            old_source = self._state.source
+            old_title = self._state.media_title
+
             # Create update dictionary
             updates = {}
 
@@ -336,7 +341,19 @@ class NaimPlayer(MediaPlayerEntity):
 
             # Update state object with all changes
             await self._state.update(**updates)
-            self.async_write_ha_state()
+
+            # Only trigger HA state update if significant state changed
+            # (not just position updates which happen every second)
+            new_state = self._state.state
+            new_source = self._state.source
+            new_title = self._state.media_title
+
+            if old_state != new_state or old_source != new_source or old_title != new_title:
+                _LOGGER.debug(
+                    "Significant state change: state %s->%s, source %s->%s, title %s->%s",
+                    old_state, new_state, old_source, new_source, old_title, new_title
+                )
+                self.async_write_ha_state()
 
         except json.JSONDecodeError as error:
             _LOGGER.error("Error parsing socket message for %s: %s", self._name, error)
