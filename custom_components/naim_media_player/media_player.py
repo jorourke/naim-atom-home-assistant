@@ -153,7 +153,7 @@ async def async_setup_entry(
     ip_address = entry.data[CONF_IP_ADDRESS]
     name = entry.data.get(CONF_NAME, DEFAULT_NAME)
     entity_id = entry.data.get("entity_id")
-    volume_step = entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP)
+    volume_step = entry.options.get(CONF_VOLUME_STEP, entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP))
 
     # Get sources from options first (reconfigured), then data (initial setup), then None (fallback)
     sources = entry.options.get(CONF_SOURCES) or entry.data.get(CONF_SOURCES)
