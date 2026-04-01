@@ -16,6 +16,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
+from homeassistant.helpers.selector import NumberSelector, NumberSelectorConfig, NumberSelectorMode
 
 from .const import (
     CONF_SOURCES,
@@ -115,8 +116,8 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
                 vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
                 vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
-                vol.Optional(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
-                    vol.Coerce(int), vol.Range(min=1, max=20)
+                vol.Required(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): NumberSelector(
+                    NumberSelectorConfig(min=1, max=20, step=1, mode=NumberSelectorMode.BOX)
                 ),
             }
         )
@@ -310,8 +311,8 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
                         mode=SelectSelectorMode.LIST,
                     )
                 ),
-                vol.Optional(CONF_VOLUME_STEP, default=current_volume_step): vol.All(
-                    vol.Coerce(int), vol.Range(min=1, max=20)
+                vol.Required(CONF_VOLUME_STEP, default=current_volume_step): NumberSelector(
+                    NumberSelectorConfig(min=1, max=20, step=1, mode=NumberSelectorMode.BOX)
                 ),
             }
         )
