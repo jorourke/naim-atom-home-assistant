@@ -3,15 +3,15 @@ name = "naim-atom-home-assistant"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = "==3.12.3"
+requires-python = ">=3.14.2"
 dependencies = [
     "aiohttp>=3.9.3",
-    "homeassistant>=2024.3.3",
-    "pytest-aiohttp==1.0.5",
-    "pytest-asyncio==0.24.0",
-    "pytest-homeassistant-custom-component==0.13.190",
-    "pytest-timeout==2.3.1",
-    "pytest==8.3.3",
+    "homeassistant>=2026.4.0",
+    "pytest-aiohttp>=1.0.5",
+    "pytest-asyncio>=0.24.0",
+    "pytest-homeassistant-custom-component==0.13.324",
+    "pytest-timeout>=2.3.1",
+    "pytest>=8.3.3",
     "pytest-cov>=4.1.0",
     "ruff>=0.8.4",
     "coverage>=7.6.8",
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 120
 
 [tool.ruff.lint]
@@ -31,7 +31,19 @@ select = [
     "B",  # flake8-bugbear
 ]
 
-
+[tool.uv]
+constraint-dependencies = [
+    "pyobjc-framework-libdispatch>=11.1",
+    "pyobjc-core>=11.1",
+    "pyobjc-framework-corebluetooth>=11.1",
+    "httpcore==1.0.9",
+    "h11==0.16.0",
+    "anyio==4.10.0",
+    "mashumaro>=3.17.0",
+    "bleak==2.1.1",
+    "httpx==0.28.1",
+    "pydantic==2.12.2",
+]
 
 [tool.pytest.ini_options]
 addopts = "--cov=custom_components/naim_media_player --cov-report=html:htmlcov --cov-report=xml:coverage.xml --cov-report=term-missing"

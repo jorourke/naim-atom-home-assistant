@@ -351,7 +351,12 @@ class NaimPlayer(MediaPlayerEntity):
             if old_state != new_state or old_source != new_source or old_title != new_title:
                 _LOGGER.debug(
                     "Significant state change: state %s->%s, source %s->%s, title %s->%s",
-                    old_state, new_state, old_source, new_source, old_title, new_title
+                    old_state,
+                    new_state,
+                    old_source,
+                    new_source,
+                    old_title,
+                    new_title,
                 )
                 self.async_write_ha_state()
 

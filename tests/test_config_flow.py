@@ -37,7 +37,13 @@ async def test_form(hass: HomeAssistant) -> None:
     mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
     mock_writer.wait_closed.return_value.set_result(None)
 
-    with patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)):
+    with (
+        patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+    ):
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
