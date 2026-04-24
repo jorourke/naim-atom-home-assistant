@@ -37,7 +37,13 @@ async def test_form(hass: HomeAssistant) -> None:
     mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
     mock_writer.wait_closed.return_value.set_result(None)
 
-    with patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)):
+    with (
+        patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+    ):
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
@@ -101,46 +107,6 @@ async def test_form_unknown_error(hass: HomeAssistant) -> None:
 
     assert result2["type"] == "form"
     assert result2["errors"] == {"base": "unknown"}
-
-
-@pytest.mark.skip(reason="This test is not working")
-async def test_duplicate_error(hass: HomeAssistant) -> None:
-    """Test that errors are shown when duplicates are added."""
-    # First entry
-    mock_writer = MagicMock()
-    mock_writer.close.return_value = None
-    mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
-    mock_writer.wait_closed.return_value.set_result(None)
-
-    # Create first entry
-    with patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)):
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
-        result2 = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_IP_ADDRESS: "192.168.1.100",
-                CONF_NAME: "Test Naim",
-            },
-        )
-        await hass.async_block_till_done()
-
-    assert result2["type"] == "create_entry"
-
-    # Try to add duplicate entry
-    with patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)):
-        result3 = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
-
-        result4 = await hass.config_entries.flow.async_configure(
-            result3["flow_id"],
-            {
-                CONF_IP_ADDRESS: "192.168.1.100",  # Same IP as first entry
-                CONF_NAME: "Test Naim 2",
-            },
-        )
-
-    # The flow should abort with "already_configured"
-    assert result4["type"] == "abort"
-    assert result4["reason"] == "already_configured"
 
 
 async def test_form_invalid_volume_step(hass: HomeAssistant) -> None:

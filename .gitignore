@@ -172,3 +172,8 @@ cython_debug/
 
 # Claude
 .claude
+
+# Git worktrees
+.worktrees/
+
+.envrc

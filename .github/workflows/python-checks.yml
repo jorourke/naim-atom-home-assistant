@@ -11,7 +11,7 @@ on:
       - "*/*"
 
 env:
-  PYTHON_VERSION: "3.12.3"
+  PYTHON_VERSION: "3.14.2"
 
 jobs:
   lint-and-tests:

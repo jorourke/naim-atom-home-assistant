@@ -48,6 +48,30 @@ updates via WebSocket connection.
 1. Copy the `custom_components/naim_media_player` directory to your Home Assistant's `custom_components` directory
 2. Restart Home Assistant
 
+## Home Assistant Stage Deploy
+
+This repo includes a local-only deployment helper for testing the integration on James's Home Assistant instance.
+
+Prerequisites:
+
+- `.envrc` or shell environment provides `HASS_SERVER` and `HASS_TOKEN`
+- `/Volumes/config` is the Home Assistant `/config` SMB mount, or the helper can mount it via macOS Finder/Keychain
+- `hass-cli` is installed
+
+Commands:
+
+```bash
+uv run python scripts/ha_stage.py status
+uv run python scripts/ha_stage.py smoke --entity-id media_player.naim_atom
+uv run python scripts/ha_stage.py deploy --entity-id media_player.naim_atom
+uv run python scripts/ha_stage.py rollback
+```
+
+Every deploy creates a timestamped backup under `/Volumes/config/custom_components/.deploy_backups/naim_media_player/`.
+Rollback restores the latest backup by default, restarts Home Assistant, and reruns passive smoke checks.
+
+The helper never prints `HASS_TOKEN` and does not create or copy `.envrc`.
+
 ## Configuration
 
 This integration uses Home Assistant's UI-based configuration flow. No YAML configuration is required.
