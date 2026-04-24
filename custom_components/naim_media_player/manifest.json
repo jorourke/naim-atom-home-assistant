@@ -1,12 +1,14 @@
 {
   "domain": "naim_media_player",
   "name": "Naim Media Player",
-  "codeowners": ["@jorourke"],
+  "codeowners": [
+    "@jorourke"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/jorourke/naim-atom-home-assistant",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/jorourke/naim-atom-home-assistant/issues",
   "requirements": [],
-  "version": "0.4.0"
+  "version": "0.4.1"
 }
