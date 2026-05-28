@@ -211,19 +211,21 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def async_volume_up(self) -> None:
         """Increase volume by one configured step."""
-        new_volume = min(1.0, self._state.volume + self._volume_step)
-        new_volume = round_to_nearest(new_volume, step=self._volume_step)
-        await self._client.set_volume(int(new_volume * 100))
+        current_percent = int(round(self._state.volume * 100))
+        step_percent = int(round(self._volume_step * 100))
+        target_percent = min(100, current_percent + step_percent)
+        await self._client.set_volume(target_percent)
 
     async def async_volume_down(self) -> None:
         """Decrease volume by one configured step."""
-        new_volume = max(0.0, self._state.volume - self._volume_step)
-        new_volume = round_to_nearest(new_volume, step=self._volume_step)
-        await self._client.set_volume(int(new_volume * 100))
+        current_percent = int(round(self._state.volume * 100))
+        step_percent = int(round(self._volume_step * 100))
+        target_percent = max(0, current_percent - step_percent)
+        await self._client.set_volume(target_percent)
 
     async def async_mute_volume(self, mute: bool) -> None:
-        """Mute or unmute volume."""
-        await self._client.set_mute(bool(mute))
+        """Toggle mute (fork-only: ignores HA's requested value, flips device state)."""
+        await self._client.toggle_mute()
 
     async def async_media_play(self) -> None:
         """Play or resume media."""
