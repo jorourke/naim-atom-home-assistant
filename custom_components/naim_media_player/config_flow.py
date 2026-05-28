@@ -15,7 +15,14 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
     CONF_SERIAL,
@@ -143,8 +150,8 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
                 vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
                 vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
-                vol.Optional(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
-                    vol.Coerce(float), vol.In([1, 5, 10])
+                vol.Required(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): NumberSelector(
+                    NumberSelectorConfig(min=1, max=20, step=1, mode=NumberSelectorMode.BOX)
                 ),
             }
         )
@@ -310,7 +317,19 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
             selected_names = user_input.get(CONF_SOURCES, [])
             selected_sources = {name: self._available_sources[name] for name in selected_names}
 
-            return self.async_create_entry(title="", data={CONF_SOURCES: selected_sources})
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_SOURCES: selected_sources,
+                    CONF_VOLUME_STEP: user_input.get(
+                        CONF_VOLUME_STEP,
+                        self._config_entry.options.get(
+                            CONF_VOLUME_STEP,
+                            self._config_entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP),
+                        ),
+                    ),
+                },
+            )
 
         # Get currently configured sources (from options first, then data, then empty)
         current_sources = self._config_entry.options.get(CONF_SOURCES, self._config_entry.data.get(CONF_SOURCES, {}))
@@ -319,6 +338,12 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
         # If no current sources, default to all available
         if not current_source_names:
             current_source_names = list(self._available_sources.keys())
+
+        # Get current volume step (from options first, then data, then default)
+        current_volume_step = self._config_entry.options.get(
+            CONF_VOLUME_STEP,
+            self._config_entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP),
+        )
 
         # Build the schema
         source_names = list(self._available_sources.keys())
@@ -330,6 +355,9 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
                         multiple=True,
                         mode=SelectSelectorMode.LIST,
                     )
+                ),
+                vol.Required(CONF_VOLUME_STEP, default=current_volume_step): NumberSelector(
+                    NumberSelectorConfig(min=1, max=20, step=1, mode=NumberSelectorMode.BOX)
                 ),
             }
         )
