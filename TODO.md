@@ -25,6 +25,11 @@ Keep existing working integration, add another config entry pointing to same dev
 
 ## Bug Fixes
 
+### Investigate: Naim device not auto-off after idle
+- [ ] Determine if this was a Naim device setting or HA automation
+- [ ] Check if idle state is being reported correctly
+- [ ] Verify no changes affected idle detection
+
 ### Issue #3: Mute Function Not Working Properly
 - [x] Already fixed in current codebase - close the issue
 

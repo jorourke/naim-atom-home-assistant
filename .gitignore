@@ -173,5 +173,7 @@ cython_debug/
 # Claude
 .claude
 
-# MacOS folder attributes files
-.DS_Store
+# Git worktrees
+.worktrees/
+
+.envrc
