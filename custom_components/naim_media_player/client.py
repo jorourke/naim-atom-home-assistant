@@ -85,6 +85,42 @@ class NaimClient:
         await self._state.update(source="user", muted=mute)
         await self.set_value("levels/room", {"mute": int(mute)})
 
+    async def toggle_mute(self) -> None:
+        """Read the device's actual mute state, flip it, and write it back.
+
+        Fork-only: ignores Home Assistant's requested value and toggles the
+        device's real mute state, sending via PUT with a GET fallback.
+        """
+        try:
+            current_raw = await self.get_value("levels/room", "mute")
+        except NaimConnectionError as error:
+            _LOGGER.error("Cannot read mute state to toggle: %s", error)
+            return
+
+        try:
+            current_mute = bool(int(current_raw))
+        except (TypeError, ValueError):
+            current_mute = self._state.muted
+        new_mute = not current_mute
+
+        previous_mute = self._state.muted
+        await self._state.update(source="user", muted=new_mute)
+
+        url = f"http://{self._host}:{self._http_port}/levels/room"
+        params = {"mute": int(new_mute)}
+        for method in ("put", "get"):
+            request = self._session.put if method == "put" else self._session.get
+            try:
+                async with request(url, params=params, timeout=self._request_timeout) as response:
+                    if 200 <= response.status < 300:
+                        return
+                    _LOGGER.warning("%s mute returned status %s", method.upper(), response.status)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+                _LOGGER.warning("%s mute request failed: %s", method.upper(), error)
+
+        _LOGGER.error("Failed to toggle mute; reverting local state")
+        await self._state.update(source="user", muted=previous_mute)
+
     async def set_power(self, on: bool) -> None:
         """Set device power state."""
         await self.set_value("power", {"system": "on" if on else "lona"})
