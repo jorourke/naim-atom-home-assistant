@@ -396,6 +396,51 @@ async def test_websocket_multiple_json_objects(hass):
     assert callback.await_count == 2
 
 
+async def test_drain_buffer_resyncs_after_garbage_before_newline(hass, state):
+    """Garbage at the buffer head followed by a newline must be dropped so parsing resumes."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    client._buffer = 'garbage-not-json\n{"data": {"state": "playing"}}'
+
+    await client._drain_buffer()
+
+    assert state.playing_state == MediaPlayerState.PLAYING
+    assert client._buffer == ""
+
+
+async def test_drain_buffer_waits_for_more_data_without_newline(hass, state):
+    """A decode failure with no newline yet is treated as an incomplete message."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    client._buffer = "not json and no newline"
+
+    await client._drain_buffer()
+
+    # Buffer is preserved untouched, waiting for more data.
+    assert client._buffer == "not json and no newline"
+
+
+async def test_websocket_resyncs_after_overflow_leaves_garbage(hass, state):
+    """Garbage left at the buffer head after an overflow clear must not stall parsing forever."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+
+    mock_reader = AsyncMock()
+    mock_writer = MagicMock()
+    valid_message = b'{"data": {"state": "playing"}}'
+    mock_reader.read.side_effect = [
+        b"x" * (MAX_BUFFER_SIZE + 1),
+        b"tail-of-cut-message\n" + valid_message,
+        asyncio.CancelledError(),
+    ]
+
+    with (
+        patch("asyncio.open_connection", return_value=(mock_reader, mock_writer)),
+        patch.object(client, "poll_state", new_callable=AsyncMock),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await client._socket_listener()
+
+    assert state.playing_state == MediaPlayerState.PLAYING
+
+
 async def test_websocket_updates_metadata(hass, state):
     """Test WebSocket metadata parsing."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)

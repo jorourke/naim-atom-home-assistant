@@ -293,7 +293,13 @@ class NaimClient:
             try:
                 _obj, idx = self._decoder.raw_decode(self._buffer)
             except json.JSONDecodeError:
-                return
+                newline_idx = self._buffer.find("\n")
+                if newline_idx == -1:
+                    # Genuinely incomplete message; wait for more data.
+                    return
+                _LOGGER.warning("Discarding undecodable WebSocket data up to next newline")
+                self._buffer = self._buffer[newline_idx + 1 :]
+                continue
 
             message = self._buffer[:idx]
             self._buffer = self._buffer[idx:]
