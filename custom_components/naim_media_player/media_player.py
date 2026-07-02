@@ -106,7 +106,7 @@ class NaimPlayer(MediaPlayerEntity):
         self._source_map = sources if sources else self.DEFAULT_SOURCE_MAP.copy()
         self._source_list = list(self._source_map.keys())
         self._state = NaimPlayerState(
-            on_change=self.async_write_ha_state,
+            on_change=self._write_state_when_registered,
             debounce_timeout=2.0,
         )
         self._client = NaimClient(
@@ -117,6 +117,16 @@ class NaimPlayer(MediaPlayerEntity):
             state=self._state,
         )
 
+    def _write_state_when_registered(self) -> None:
+        """Write HA state, skipping updates that arrive before HA registers the entity.
+
+        The first poll runs during update_before_add, when entity_id is not yet
+        assigned; writing then raises and aborts the entity add.
+        """
+        if self.hass is None or self.entity_id is None:
+            return
+        self.async_write_ha_state()
+
     async def async_added_to_hass(self) -> None:
         """Start push updates when Home Assistant adds the entity."""
         await self._client.start_websocket()
@@ -125,10 +135,10 @@ class NaimPlayer(MediaPlayerEntity):
     def available(self) -> bool:
         """Return whether the device is available.
 
-        Requires both a healthy polled/pushed state and a live WebSocket
-        connection, so device loss is reflected promptly.
+        Either channel proves the device is alive: a healthy poll or a live
+        WebSocket. A transient drop of one channel must not flap the entity.
         """
-        return bool(self._state.available and self._client.connected)
+        return bool(self._state.available or self._client.connected)
 
     @property
     def supported_features(self) -> int:

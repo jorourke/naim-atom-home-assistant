@@ -57,17 +57,24 @@ async def test_supported_features(mock_player):
     assert features & MediaPlayerEntityFeature.PREVIOUS_TRACK
 
 
-async def test_available_requires_connected_socket(mock_player):
-    """Availability must reflect the client's WebSocket connection, not just polled state."""
+async def test_available_when_socket_down_but_polling_healthy(mock_player):
+    """A WebSocket drop must not mark the device unavailable while HTTP polling succeeds."""
     mock_player._state.available = True
+    mock_player._client.connected = False
+    assert mock_player.available is True
+
+
+async def test_available_via_socket_when_poll_blips(mock_player):
+    """A single failed poll must not mark the device unavailable while the socket is live."""
+    mock_player._state.available = False
     mock_player._client.connected = True
     assert mock_player.available is True
 
-    mock_player._client.connected = False
-    assert mock_player.available is False
 
-    mock_player._client.connected = True
+async def test_unavailable_when_both_channels_down(mock_player):
+    """Device loss (poll failing and socket down) must mark the entity unavailable."""
     mock_player._state.available = False
+    mock_player._client.connected = False
     assert mock_player.available is False
 
 
@@ -91,6 +98,30 @@ async def test_entity_id_not_set_when_not_configured(hass):
     with patch("custom_components.naim_media_player.media_player.NaimClient"):
         player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
     assert player.entity_id is None
+
+
+async def test_state_change_before_registration_does_not_raise(hass):
+    """A state change during update_before_add (entity_id not yet assigned) must not raise.
+
+    HA runs the first poll before generating an entity_id; a raising write callback
+    aborts the entity add entirely.
+    """
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
+    player.hass = hass
+    assert player.entity_id is None
+    await player._state.update(source="poll", power_state=MediaPlayerState.ON)
+
+
+async def test_state_change_after_registration_writes_state(hass):
+    """Once the entity is registered, state changes must write HA state."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
+    player.hass = hass
+    player.entity_id = "media_player.test_naim"
+    with patch.object(player, "async_write_ha_state") as write_state:
+        await player._state.update(source="poll", power_state=MediaPlayerState.ON)
+    write_state.assert_called_once()
 
 
 async def test_entity_id_explicit_still_honored(hass):
