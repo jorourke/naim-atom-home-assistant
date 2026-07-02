@@ -8,6 +8,7 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
+from homeassistant.util import dt as dt_util
 
 from custom_components.naim_media_player.const import DOMAIN
 from custom_components.naim_media_player.media_player import NaimPlayer
@@ -158,6 +159,17 @@ async def test_properties_delegate_to_state(mock_player):
     assert mock_player.media_duration == 300
     assert mock_player.media_position == 60
     assert mock_player.media_image_url == "http://example.com/art.jpg"
+
+
+async def test_media_position_updated_at_delegates_to_state(mock_player):
+    """The entity should expose the state's position timestamp for progress bar interpolation."""
+    assert mock_player.media_position_updated_at is None
+
+    timestamp = dt_util.utcnow()
+    mock_player._state.media_info.position = 60
+    mock_player._state.media_info.position_updated_at = timestamp
+
+    assert mock_player.media_position_updated_at == timestamp
 
 
 async def test_async_update_delegates_to_client(mock_player):

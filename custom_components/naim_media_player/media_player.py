@@ -1,6 +1,7 @@
 """Media player entity for Naim devices."""
 
 import logging
+from datetime import datetime
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -199,6 +200,11 @@ class NaimPlayer(MediaPlayerEntity):
     def media_position(self) -> int | float | None:
         """Return media position."""
         return self._state.media_position
+
+    @property
+    def media_position_updated_at(self) -> datetime | None:
+        """Return when the position was last updated, so HA can interpolate the progress bar."""
+        return self._state.media_position_updated_at
 
     @property
     def media_image_url(self) -> str | None:
