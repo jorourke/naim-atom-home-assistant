@@ -1,8 +1,6 @@
 """Media player entity for Naim devices."""
 
 import logging
-import random
-import string
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -12,15 +10,19 @@ from homeassistant.components.media_player import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 
 from .client import NaimClient
 from .const import (
+    CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
     DEFAULT_HTTP_PORT,
+    DEFAULT_MODEL,
     DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_VOLUME_STEP,
+    DOMAIN,
 )
 from .state import NaimPlayerState
 
@@ -45,9 +47,10 @@ async def async_setup_entry(
     entity_id = entry.data.get("entity_id")
     volume_step = entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP)
     sources = entry.options.get(CONF_SOURCES) or entry.data.get(CONF_SOURCES)
+    serial = entry.data.get(CONF_SERIAL)
 
     async_add_entities(
-        [NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources)],
+        [NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources, serial)],
         True,
     )
 
@@ -75,6 +78,7 @@ class NaimPlayer(MediaPlayerEntity):
         entity_id: str | None = None,
         volume_step: float = DEFAULT_VOLUME_STEP,
         sources: dict[str, str] | None = None,
+        serial: str | None = None,
     ) -> None:
         """Initialize the media player."""
         _LOGGER.info("Initializing Naim media player: %s at %s", name, ip_address)
@@ -85,11 +89,19 @@ class NaimPlayer(MediaPlayerEntity):
 
         if entity_id:
             self.entity_id = f"media_player.{entity_id}"
-        else:
-            suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=5))
-            self.entity_id = f"media_player.{name.lower().replace(' ', '_')}_{suffix}"
+        # Otherwise leave entity_id unset so Home Assistant derives it from the name.
 
-        self._attr_unique_id = f"naim_{ip_address}"
+        self._attr_unique_id = serial if serial else f"naim_{ip_address}"
+        self._attr_device_info = (
+            DeviceInfo(
+                identifiers={(DOMAIN, serial)},
+                manufacturer="Naim",
+                model=DEFAULT_MODEL,
+                name=name,
+            )
+            if serial
+            else None
+        )
         self._source_map = sources if sources else self.DEFAULT_SOURCE_MAP.copy()
         self._source_list = list(self._source_map.keys())
         self._state = NaimPlayerState(

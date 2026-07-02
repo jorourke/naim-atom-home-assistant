@@ -15,8 +15,10 @@ from custom_components.naim_media_player.config_flow import (
     NaimConfigFlow,
     NaimOptionsFlow,
     async_get_available_inputs,
+    async_get_device_serial,
 )
 from custom_components.naim_media_player.const import (
+    CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
     DEFAULT_NAME,
@@ -41,6 +43,10 @@ async def test_form(hass: HomeAssistant) -> None:
         patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
         patch(
             "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
             return_value=None,
         ),
     ):
@@ -256,6 +262,155 @@ async def test_async_get_available_inputs_unexpected_error(hass: HomeAssistant) 
     assert result is None
 
 
+# Tests for async_get_device_serial
+
+
+async def test_async_get_device_serial_success(hass: HomeAssistant) -> None:
+    """Test fetching the device serial from the /system endpoint."""
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(return_value={"serial": "ABC123"})
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        result = await async_get_device_serial(hass, "192.168.1.100")
+
+    assert result == "ABC123"
+
+
+async def test_async_get_device_serial_http_error(hass: HomeAssistant) -> None:
+    """Test handling an HTTP error while fetching the serial."""
+    mock_response = AsyncMock()
+    mock_response.status = 500
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        result = await async_get_device_serial(hass, "192.168.1.100")
+
+    assert result is None
+
+
+async def test_async_get_device_serial_connection_error(hass: HomeAssistant) -> None:
+    """Test handling a connection error while fetching the serial."""
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=ClientError("Connection failed"))
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        result = await async_get_device_serial(hass, "192.168.1.100")
+
+    assert result is None
+
+
+async def test_async_get_device_serial_missing_field(hass: HomeAssistant) -> None:
+    """Test handling a response with no serial field."""
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(return_value={})
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        result = await async_get_device_serial(hass, "192.168.1.100")
+
+    assert result is None
+
+
+# Tests for serial-based unique_id / identity
+
+
+async def test_form_uses_serial_as_unique_id(hass: HomeAssistant) -> None:
+    """Test the config entry unique_id and data use the fetched serial, not the IP."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+
+    mock_writer = MagicMock()
+    mock_writer.close.return_value = None
+    mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
+    mock_writer.wait_closed.return_value.set_result(None)
+
+    with (
+        patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
+            return_value="SERIAL123",
+        ),
+    ):
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_IP_ADDRESS: "192.168.1.100",
+                CONF_NAME: "Test Naim",
+                "entity_id": "test_naim",
+                CONF_VOLUME_STEP: 5,
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert result2["type"] == "create_entry"
+    assert result2["data"][CONF_SERIAL] == "SERIAL123"
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.unique_id == "SERIAL123"
+
+
+async def test_form_falls_back_to_ip_when_serial_unavailable(hass: HomeAssistant) -> None:
+    """Test the flow keeps working and falls back to the IP-based identity if serial fetch fails."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+
+    mock_writer = MagicMock()
+    mock_writer.close.return_value = None
+    mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
+    mock_writer.wait_closed.return_value.set_result(None)
+
+    with (
+        patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
+            return_value=None,
+        ),
+    ):
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_IP_ADDRESS: "192.168.1.100",
+                CONF_NAME: "Test Naim",
+                "entity_id": "test_naim",
+                CONF_VOLUME_STEP: 5,
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert result2["type"] == "create_entry"
+    assert CONF_SERIAL not in result2["data"]
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.unique_id == "192.168.1.100"
+
+
 # Tests for source selection step
 
 
@@ -276,6 +431,10 @@ async def test_form_with_source_discovery(hass: HomeAssistant) -> None:
         patch(
             "custom_components.naim_media_player.config_flow.async_get_available_inputs",
             return_value=mock_sources,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
+            return_value=None,
         ),
     ):
         result2 = await hass.config_entries.flow.async_configure(
@@ -309,6 +468,10 @@ async def test_form_source_selection_creates_entry(hass: HomeAssistant) -> None:
         patch(
             "custom_components.naim_media_player.config_flow.async_get_available_inputs",
             return_value=mock_sources,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
+            return_value=None,
         ),
     ):
         result2 = await hass.config_entries.flow.async_configure(
@@ -346,6 +509,10 @@ async def test_form_no_sources_discovered(hass: HomeAssistant) -> None:
         patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
         patch(
             "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
             return_value=None,
         ),
     ):

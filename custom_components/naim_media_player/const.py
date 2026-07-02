@@ -11,3 +11,5 @@ DEFAULT_IP = "192.168.1.127"
 CONF_VOLUME_STEP = "volume_step"
 DEFAULT_VOLUME_STEP = 5
 CONF_SOURCES = "sources"
+CONF_SERIAL = "serial"
+DEFAULT_MODEL = "Naim Atom"

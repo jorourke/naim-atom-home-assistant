@@ -18,6 +18,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
 from .const import (
+    CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
     DEFAULT_ENTITY_ID,
@@ -69,6 +70,33 @@ async def async_get_available_inputs(hass, ip_address: str, port: int = DEFAULT_
         return None
     except Exception as error:
         _LOGGER.warning("Unexpected error fetching inputs: %s", error)
+        return None
+
+
+async def async_get_device_serial(hass, ip_address: str, port: int = DEFAULT_HTTP_PORT) -> str | None:
+    """Fetch the device serial number from the Naim device's /system endpoint.
+
+    Returns the serial as a string, or None if it could not be determined.
+    """
+    try:
+        session = async_get_clientsession(hass)
+        timeout = aiohttp.ClientTimeout(total=10)
+        url = f"http://{ip_address}:{port}/system"
+
+        async with session.get(url, timeout=timeout) as response:
+            if response.status != 200:
+                _LOGGER.warning("Failed to fetch device info: HTTP %s", response.status)
+                return None
+
+            data = await response.json()
+            serial = data.get("serial")
+            return str(serial) if serial else None
+
+    except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+        _LOGGER.debug("Failed to fetch serial from %s: %s", ip_address, error)
+        return None
+    except Exception as error:
+        _LOGGER.warning("Unexpected error fetching device serial: %s", error)
         return None
 
 
@@ -193,12 +221,16 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # At this point, the IP is valid and the device is reachable.
-        # Create a unique ID based on the IP address.
-        await self.async_set_unique_id(validated_input[CONF_IP_ADDRESS])
+        # Prefer a stable unique ID based on the device serial (survives DHCP
+        # address changes); fall back to the IP address if it can't be fetched.
+        serial = await async_get_device_serial(self.hass, validated_input[CONF_IP_ADDRESS])
+        await self.async_set_unique_id(serial or validated_input[CONF_IP_ADDRESS])
         self._abort_if_unique_id_configured()
 
         # Store the user input and try to discover sources
         self._user_input = validated_input
+        if serial:
+            self._user_input[CONF_SERIAL] = serial
         self._available_sources = await async_get_available_inputs(self.hass, validated_input[CONF_IP_ADDRESS]) or {}
 
         # If we discovered sources, show the selection step
