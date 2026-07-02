@@ -77,13 +77,13 @@ class NaimClient:
     async def set_volume(self, volume: int) -> None:
         """Set device volume as an integer percentage."""
         volume = max(0, min(100, volume))
-        await self._state.update(source="user", volume=volume / 100)
         await self.set_value("levels/room", {"volume": volume})
+        await self._state.update(source="user", volume=volume / 100)
 
     async def set_mute(self, mute: bool) -> None:
         """Set device mute state."""
-        await self._state.update(source="user", muted=mute)
         await self.set_value("levels/room", {"mute": int(mute)})
+        await self._state.update(source="user", muted=mute)
 
     async def set_power(self, on: bool) -> None:
         """Set device power state."""

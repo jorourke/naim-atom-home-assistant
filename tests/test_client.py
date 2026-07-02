@@ -144,6 +144,46 @@ async def test_set_mute_updates_state_and_device(hass, state):
     assert "muted" in state._debounce_timestamps
 
 
+async def test_set_volume_failed_command_leaves_state_and_debounce_unarmed(hass, state):
+    """A failed set_volume command must not show a stale user value or arm the debounce."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
+    await state.update(source="poll", volume=0.5)
+    with aioresponses() as mock:
+        mock.put(
+            "http://192.168.1.100:15081/levels/room?volume=75",
+            exception=aiohttp.ClientError(),
+        )
+        with pytest.raises(NaimConnectionError):
+            await client.set_volume(75)
+
+    assert state.volume == 0.5
+    assert "volume" not in state._debounce_timestamps
+
+    # A subsequent poll/websocket update must be free to correct the value.
+    await state.update(source="poll", volume=0.3)
+    assert state.volume == 0.3
+
+
+async def test_set_mute_failed_command_leaves_state_and_debounce_unarmed(hass, state):
+    """A failed set_mute command must not show a stale user value or arm the debounce."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
+    await state.update(source="poll", muted=False)
+    with aioresponses() as mock:
+        mock.put(
+            "http://192.168.1.100:15081/levels/room?mute=1",
+            exception=aiohttp.ClientError(),
+        )
+        with pytest.raises(NaimConnectionError):
+            await client.set_mute(True)
+
+    assert state.muted is False
+    assert "muted" not in state._debounce_timestamps
+
+    # A subsequent poll/websocket update must be free to correct the value.
+    await state.update(source="poll", muted=True)
+    assert state.muted is True
+
+
 async def test_set_power_updates_state_and_device(hass, state):
     """Test set_power sends command and updates power state."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
