@@ -1,8 +1,7 @@
 """Media player entity for Naim devices."""
 
 import logging
-import random
-import string
+from datetime import datetime
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -12,15 +11,19 @@ from homeassistant.components.media_player import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 
 from .client import NaimClient
 from .const import (
+    CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
     DEFAULT_HTTP_PORT,
+    DEFAULT_MODEL,
     DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_VOLUME_STEP,
+    DOMAIN,
 )
 from .state import NaimPlayerState
 
@@ -45,9 +48,10 @@ async def async_setup_entry(
     entity_id = entry.data.get("entity_id")
     volume_step = entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP)
     sources = entry.options.get(CONF_SOURCES) or entry.data.get(CONF_SOURCES)
+    serial = entry.data.get(CONF_SERIAL)
 
     async_add_entities(
-        [NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources)],
+        [NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources, serial)],
         True,
     )
 
@@ -75,6 +79,7 @@ class NaimPlayer(MediaPlayerEntity):
         entity_id: str | None = None,
         volume_step: float = DEFAULT_VOLUME_STEP,
         sources: dict[str, str] | None = None,
+        serial: str | None = None,
     ) -> None:
         """Initialize the media player."""
         _LOGGER.info("Initializing Naim media player: %s at %s", name, ip_address)
@@ -85,15 +90,23 @@ class NaimPlayer(MediaPlayerEntity):
 
         if entity_id:
             self.entity_id = f"media_player.{entity_id}"
-        else:
-            suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=5))
-            self.entity_id = f"media_player.{name.lower().replace(' ', '_')}_{suffix}"
+        # Otherwise leave entity_id unset so Home Assistant derives it from the name.
 
-        self._attr_unique_id = f"naim_{ip_address}"
+        self._attr_unique_id = serial if serial else f"naim_{ip_address}"
+        self._attr_device_info = (
+            DeviceInfo(
+                identifiers={(DOMAIN, serial)},
+                manufacturer="Naim",
+                model=DEFAULT_MODEL,
+                name=name,
+            )
+            if serial
+            else None
+        )
         self._source_map = sources if sources else self.DEFAULT_SOURCE_MAP.copy()
         self._source_list = list(self._source_map.keys())
         self._state = NaimPlayerState(
-            on_change=self.async_write_ha_state,
+            on_change=self._write_state_when_registered,
             debounce_timeout=2.0,
         )
         self._client = NaimClient(
@@ -104,14 +117,28 @@ class NaimPlayer(MediaPlayerEntity):
             state=self._state,
         )
 
+    def _write_state_when_registered(self) -> None:
+        """Write HA state, skipping updates that arrive before HA registers the entity.
+
+        The first poll runs during update_before_add, when entity_id is not yet
+        assigned; writing then raises and aborts the entity add.
+        """
+        if self.hass is None or self.entity_id is None:
+            return
+        self.async_write_ha_state()
+
     async def async_added_to_hass(self) -> None:
         """Start push updates when Home Assistant adds the entity."""
         await self._client.start_websocket()
 
     @property
     def available(self) -> bool:
-        """Return whether the device is available."""
-        return self._state.available
+        """Return whether the device is available.
+
+        Either channel proves the device is alive: a healthy poll or a live
+        WebSocket. A transient drop of one channel must not flap the entity.
+        """
+        return bool(self._state.available or self._client.connected)
 
     @property
     def supported_features(self) -> int:
@@ -183,6 +210,11 @@ class NaimPlayer(MediaPlayerEntity):
     def media_position(self) -> int | float | None:
         """Return media position."""
         return self._state.media_position
+
+    @property
+    def media_position_updated_at(self) -> datetime | None:
+        """Return when the position was last updated, so HA can interpolate the progress bar."""
+        return self._state.media_position_updated_at
 
     @property
     def media_image_url(self) -> str | None:

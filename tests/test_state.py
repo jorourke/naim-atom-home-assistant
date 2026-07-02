@@ -5,6 +5,7 @@ import time
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.components.media_player import MediaPlayerState
+from homeassistant.util import dt as dt_util
 
 from custom_components.naim_media_player.state import (
     DEBOUNCED_FIELDS,
@@ -538,3 +539,43 @@ class TestThreadSafety:
 
         await asyncio.gather(update_loop(), read_loop())
         # If we got here without error, the test passes
+
+
+# --- media_position_updated_at tests ---
+
+
+class TestMediaPositionUpdatedAt:
+    """Tests for the position timestamp used to interpolate the progress bar."""
+
+    async def test_none_before_any_position_update(self):
+        """No timestamp should be recorded until a position is set."""
+        state = NaimPlayerState()
+        assert state.media_position_updated_at is None
+
+    async def test_position_update_records_utc_timestamp(self):
+        """Setting position should record a UTC timestamp via dt_util.utcnow()."""
+        state = NaimPlayerState()
+        before = dt_util.utcnow()
+        await state.update(source="poll", position=42)
+        after = dt_util.utcnow()
+
+        assert state.media_position_updated_at is not None
+        assert before <= state.media_position_updated_at <= after
+
+    async def test_position_timestamp_refreshes_on_each_update(self):
+        """The timestamp should update whenever position is set, poll or websocket."""
+        state = NaimPlayerState()
+        await state.update(source="poll", position=10)
+        first_timestamp = state.media_position_updated_at
+
+        await asyncio.sleep(0.01)
+        await state.update(source="websocket", position=10)
+        second_timestamp = state.media_position_updated_at
+
+        assert second_timestamp > first_timestamp
+
+    async def test_non_position_update_does_not_set_timestamp(self):
+        """Updates that don't touch position should not create a timestamp."""
+        state = NaimPlayerState()
+        await state.update(source="poll", title="Song")
+        assert state.media_position_updated_at is None

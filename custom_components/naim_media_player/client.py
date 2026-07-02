@@ -55,6 +55,11 @@ class NaimClient:
         self._buffer = ""
         self._decoder = json.JSONDecoder()
 
+    @property
+    def connected(self) -> bool:
+        """Return whether the WebSocket connection is currently live."""
+        return self._connected
+
     async def get_value(self, endpoint: str, variable: str) -> Any:
         """Get a value from an API endpoint with retries."""
         data = await self._get_json(endpoint)
@@ -77,13 +82,13 @@ class NaimClient:
     async def set_volume(self, volume: int) -> None:
         """Set device volume as an integer percentage."""
         volume = max(0, min(100, volume))
-        await self._state.update(source="user", volume=volume / 100)
         await self.set_value("levels/room", {"volume": volume})
+        await self._state.update(source="user", volume=volume / 100)
 
     async def set_mute(self, mute: bool) -> None:
         """Set device mute state."""
-        await self._state.update(source="user", muted=mute)
         await self.set_value("levels/room", {"mute": int(mute)})
+        await self._state.update(source="user", muted=mute)
 
     async def set_power(self, on: bool) -> None:
         """Set device power state."""
@@ -98,8 +103,14 @@ class NaimClient:
         await self.send_command("nowplaying", cmd)
 
     async def poll_state(self) -> None:
-        """Fetch full device state via HTTP and write it to state."""
-        power = await self._get_json_safe("power")
+        """Fetch full device state via HTTP and write it to state.
+
+        Uses a single-attempt request path so a poll never blocks
+        async_update for the full retry/backoff duration on an
+        unreachable device; nowplaying and levels/room are fetched
+        concurrently to keep polling fast.
+        """
+        power = await self._get_json_safe("power", retries=1)
         if power is None:
             await self._state.update(source="poll", available=False)
             return
@@ -110,8 +121,12 @@ class NaimClient:
             await self._state.update(source="poll", power_state=MediaPlayerState.OFF)
             return
 
-        nowplaying = await self._get_json_safe("nowplaying") or {}
-        levels = await self._get_json_safe("levels/room") or {}
+        nowplaying, levels = await asyncio.gather(
+            self._get_json_safe("nowplaying", retries=1),
+            self._get_json_safe("levels/room", retries=1),
+        )
+        nowplaying = nowplaying or {}
+        levels = levels or {}
 
         transport = nowplaying.get("transportState")
         playing_state = self._transport_state_to_ha(transport)
@@ -238,14 +253,14 @@ class NaimClient:
 
         await self._state.update(source="websocket", **updates)
 
-    async def _get_json(self, endpoint: str) -> dict[str, Any]:
+    async def _get_json(self, endpoint: str, retries: int | None = None) -> dict[str, Any]:
         """Get JSON from an endpoint with retries."""
-        return await self._request("get", endpoint)
+        return await self._request("get", endpoint, retries=retries)
 
-    async def _get_json_safe(self, endpoint: str) -> dict[str, Any] | None:
+    async def _get_json_safe(self, endpoint: str, retries: int | None = None) -> dict[str, Any] | None:
         """Get JSON from an endpoint, returning None on failure."""
         try:
-            return await self._get_json(endpoint)
+            return await self._get_json(endpoint, retries=retries)
         except NaimConnectionError as error:
             _LOGGER.debug("Cannot reach device at %s for %s: %s", self._host, endpoint, error)
             return None
@@ -255,12 +270,18 @@ class NaimClient:
         method: str,
         endpoint: str,
         params: dict[str, str | int | bool] | None = None,
+        retries: int | None = None,
     ) -> dict[str, Any]:
-        """Make an HTTP request with retries."""
+        """Make an HTTP request with retries.
+
+        `retries` overrides the client's default max_retries; pass a low
+        value (e.g. 1) for latency-sensitive callers like polling.
+        """
         url = f"http://{self._host}:{self._http_port}/{endpoint}"
         request = self._session.get if method == "get" else self._session.put
+        max_retries = retries if retries is not None else self._max_retries
 
-        for retry in range(self._max_retries):
+        for retry in range(max_retries):
             try:
                 async with request(url, params=params, timeout=self._request_timeout) as response:
                     if response.status == 200:
@@ -274,15 +295,22 @@ class NaimClient:
                     method.upper(),
                     endpoint,
                     retry + 1,
-                    self._max_retries,
+                    max_retries,
                 )
             except aiohttp.ClientError as error:
-                raise NaimConnectionError(f"Failed to request {endpoint}: {error}") from error
+                _LOGGER.warning(
+                    "Client error on %s %s (attempt %d/%d): %s",
+                    method.upper(),
+                    endpoint,
+                    retry + 1,
+                    max_retries,
+                    error,
+                )
 
-            if retry < self._max_retries - 1:
+            if retry < max_retries - 1:
                 await asyncio.sleep(2**retry)
 
-        raise NaimConnectionError(f"Failed to request {endpoint} after {self._max_retries} attempts")
+        raise NaimConnectionError(f"Failed to request {endpoint} after {max_retries} attempts")
 
     async def _drain_buffer(self) -> None:
         """Decode and handle complete JSON objects from the socket buffer."""
@@ -293,7 +321,13 @@ class NaimClient:
             try:
                 _obj, idx = self._decoder.raw_decode(self._buffer)
             except json.JSONDecodeError:
-                return
+                newline_idx = self._buffer.find("\n")
+                if newline_idx == -1:
+                    # Genuinely incomplete message; wait for more data.
+                    return
+                _LOGGER.warning("Discarding undecodable WebSocket data up to next newline")
+                self._buffer = self._buffer[newline_idx + 1 :]
+                continue
 
             message = self._buffer[:idx]
             self._buffer = self._buffer[idx:]

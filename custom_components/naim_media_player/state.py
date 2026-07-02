@@ -5,9 +5,11 @@ import inspect
 import logging
 import time
 from collections.abc import Callable
+from datetime import datetime
 from enum import Enum, IntEnum
 
 from homeassistant.components.media_player import MediaPlayerState
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ class MediaInfo:
         self.duration = None
         self.image_url = None
         self.position = None
+        self.position_updated_at = None
 
     def reset(self) -> None:
         """Reset all media fields."""
@@ -35,6 +38,7 @@ class MediaInfo:
         self.duration = None
         self.image_url = None
         self.position = None
+        self.position_updated_at = None
 
 
 class NaimTransportState(IntEnum):
@@ -123,6 +127,9 @@ class NaimPlayerState:
                     setattr(target, target_attr, value)
                     changed = True
 
+                if attr_name == "position":
+                    self.media_info.position_updated_at = dt_util.utcnow()
+
         if changed and self._on_change:
             result = self._on_change()
             if inspect.isawaitable(result):
@@ -168,3 +175,8 @@ class NaimPlayerState:
     def media_image_url(self) -> str | None:
         """Get media image URL."""
         return self.media_info.image_url
+
+    @property
+    def media_position_updated_at(self) -> datetime | None:
+        """Get the UTC timestamp of the last position update, for progress bar interpolation."""
+        return self.media_info.position_updated_at

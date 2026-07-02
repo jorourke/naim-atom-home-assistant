@@ -1,5 +1,6 @@
 """Tests for the Naim Media Player entity."""
 
+import inspect
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,7 +8,9 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
+from homeassistant.util import dt as dt_util
 
+from custom_components.naim_media_player.const import DOMAIN
 from custom_components.naim_media_player.media_player import NaimPlayer
 
 
@@ -54,10 +57,104 @@ async def test_supported_features(mock_player):
     assert features & MediaPlayerEntityFeature.PREVIOUS_TRACK
 
 
+async def test_available_when_socket_down_but_polling_healthy(mock_player):
+    """A WebSocket drop must not mark the device unavailable while HTTP polling succeeds."""
+    mock_player._state.available = True
+    mock_player._client.connected = False
+    assert mock_player.available is True
+
+
+async def test_available_via_socket_when_poll_blips(mock_player):
+    """A single failed poll must not mark the device unavailable while the socket is live."""
+    mock_player._state.available = False
+    mock_player._client.connected = True
+    assert mock_player.available is True
+
+
+async def test_unavailable_when_both_channels_down(mock_player):
+    """Device loss (poll failing and socket down) must mark the entity unavailable."""
+    mock_player._state.available = False
+    mock_player._client.connected = False
+    assert mock_player.available is False
+
+
 async def test_source_list_default(mock_player):
     """Test default source list."""
     assert "Spotify" in mock_player.source_list
     assert "Bluetooth" in mock_player.source_list
+
+
+def test_no_random_entity_id_suffix_generation():
+    """A grep for random.choices in media_player.py should find nothing."""
+    from custom_components.naim_media_player import media_player
+
+    source = inspect.getsource(media_player)
+    assert "random.choices" not in source
+    assert "import random" not in source
+
+
+async def test_entity_id_not_set_when_not_configured(hass):
+    """Without an explicit entity_id, HA should derive it from the name (not a random suffix)."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
+    assert player.entity_id is None
+
+
+async def test_state_change_before_registration_does_not_raise(hass):
+    """A state change during update_before_add (entity_id not yet assigned) must not raise.
+
+    HA runs the first poll before generating an entity_id; a raising write callback
+    aborts the entity add entirely.
+    """
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
+    player.hass = hass
+    assert player.entity_id is None
+    await player._state.update(source="poll", power_state=MediaPlayerState.ON)
+
+
+async def test_state_change_after_registration_writes_state(hass):
+    """Once the entity is registered, state changes must write HA state."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
+    player.hass = hass
+    player.entity_id = "media_player.test_naim"
+    with patch.object(player, "async_write_ha_state") as write_state:
+        await player._state.update(source="poll", power_state=MediaPlayerState.ON)
+    write_state.assert_called_once()
+
+
+async def test_entity_id_explicit_still_honored(hass):
+    """An explicitly configured entity_id must still be used, for backward compatibility."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100", entity_id="test_naim")
+    assert player.entity_id == "media_player.test_naim"
+
+
+async def test_unique_id_falls_back_to_ip_without_serial(hass):
+    """Without a serial, unique_id falls back to the IP-derived value for backward compat."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
+    assert player.unique_id == "naim_192.168.1.100"
+    assert player.device_info is None
+
+
+async def test_unique_id_uses_serial_when_available(hass):
+    """The entity unique_id should be the device serial, not the IP, when known."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100", serial="SERIAL123")
+    assert player.unique_id == "SERIAL123"
+
+
+async def test_device_info_registers_device_with_serial(hass):
+    """The entity should expose DeviceInfo keyed by the serial for device registry entries."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100", serial="SERIAL123")
+    device_info = player.device_info
+    assert device_info is not None
+    assert device_info["manufacturer"] == "Naim"
+    assert device_info["model"]
+    assert device_info["identifiers"] == {(DOMAIN, "SERIAL123")}
 
 
 async def test_source_list_configured(hass):
@@ -93,6 +190,17 @@ async def test_properties_delegate_to_state(mock_player):
     assert mock_player.media_duration == 300
     assert mock_player.media_position == 60
     assert mock_player.media_image_url == "http://example.com/art.jpg"
+
+
+async def test_media_position_updated_at_delegates_to_state(mock_player):
+    """The entity should expose the state's position timestamp for progress bar interpolation."""
+    assert mock_player.media_position_updated_at is None
+
+    timestamp = dt_util.utcnow()
+    mock_player._state.media_info.position = 60
+    mock_player._state.media_info.position_updated_at = timestamp
+
+    assert mock_player.media_position_updated_at == timestamp
 
 
 async def test_async_update_delegates_to_client(mock_player):
