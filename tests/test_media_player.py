@@ -56,6 +56,20 @@ async def test_supported_features(mock_player):
     assert features & MediaPlayerEntityFeature.PREVIOUS_TRACK
 
 
+async def test_available_requires_connected_socket(mock_player):
+    """Availability must reflect the client's WebSocket connection, not just polled state."""
+    mock_player._state.available = True
+    mock_player._client.connected = True
+    assert mock_player.available is True
+
+    mock_player._client.connected = False
+    assert mock_player.available is False
+
+    mock_player._client.connected = True
+    mock_player._state.available = False
+    assert mock_player.available is False
+
+
 async def test_source_list_default(mock_player):
     """Test default source list."""
     assert "Spotify" in mock_player.source_list

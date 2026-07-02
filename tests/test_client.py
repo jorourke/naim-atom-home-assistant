@@ -1,6 +1,7 @@
 """Tests for the Naim Media Player client module."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -37,8 +38,8 @@ async def test_get_value_success(hass, state):
 
 
 async def test_get_value_client_error(hass, state):
-    """Test get_value with client error."""
-    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    """Test get_value with client error eventually raises after retries are exhausted."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/test", exception=aiohttp.ClientError())
         with pytest.raises(NaimConnectionError):
@@ -73,6 +74,16 @@ async def test_get_value_retry_then_success(hass, state):
     assert result == "success"
 
 
+async def test_get_value_client_error_retries_then_succeeds(hass, state):
+    """aiohttp.ClientError must be retried with backoff, not raised immediately."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=2)
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/test", exception=aiohttp.ClientError())
+        mock.get("http://192.168.1.100:15081/test", payload={"test_var": "success"})
+        result = await client.get_value("test", "test_var")
+    assert result == "success"
+
+
 async def test_set_value_success(hass, state):
     """Test successful set_value call."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
@@ -83,8 +94,8 @@ async def test_set_value_success(hass, state):
 
 
 async def test_set_value_client_error(hass, state):
-    """Test set_value with client error."""
-    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    """Test set_value with client error eventually raises after retries are exhausted."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
     with aioresponses() as mock:
         mock.put(
             "http://192.168.1.100:15081/settings?volume=50",
@@ -104,8 +115,8 @@ async def test_send_command_success(hass, state):
 
 
 async def test_send_command_client_error(hass, state):
-    """Test send_command with client error."""
-    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    """Test send_command with client error eventually raises after retries are exhausted."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
     with aioresponses() as mock:
         mock.get(
             "http://192.168.1.100:15081/controls/play?cmd=play",
@@ -248,6 +259,54 @@ async def test_poll_state_device_unreachable(hass, state):
         mock.get("http://192.168.1.100:15081/power", exception=aiohttp.ClientError())
         await client.poll_state()
     assert state.available is False
+
+
+async def test_poll_state_uses_single_retry_request_path(hass, state):
+    """Polling must use a low-retry (single attempt) request path, not the default retries."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=5)
+    responses = {
+        "power": {"system": "on"},
+        "nowplaying": {"transportState": 2},
+        "levels/room": {"volume": "50", "mute": "0"},
+    }
+
+    async def fake_request(method, endpoint, params=None, retries=None):
+        return responses[endpoint]
+
+    with patch.object(client, "_request", new=AsyncMock(side_effect=fake_request)) as mock_request:
+        await client.poll_state()
+
+    assert mock_request.call_args_list
+    for call in mock_request.call_args_list:
+        assert call.kwargs.get("retries") == 1
+
+
+async def test_poll_state_fetches_nowplaying_and_levels_concurrently(hass, state):
+    """nowplaying and levels/room must be fetched concurrently, not sequentially."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+
+    async def fake_request(method, endpoint, params=None, retries=None):
+        if endpoint == "power":
+            return {"system": "on"}
+        await asyncio.sleep(0.2)
+        if endpoint == "nowplaying":
+            return {"transportState": 2}
+        return {"volume": "50", "mute": "0"}
+
+    with patch.object(client, "_request", new=AsyncMock(side_effect=fake_request)):
+        start = time.monotonic()
+        await client.poll_state()
+        elapsed = time.monotonic() - start
+
+    assert elapsed < 0.35
+
+
+async def test_client_connected_property(hass, state):
+    """The public connected property should mirror the internal WebSocket flag."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    assert client.connected is False
+    client._connected = True
+    assert client.connected is True
 
 
 async def test_websocket_start_stop(hass, state):

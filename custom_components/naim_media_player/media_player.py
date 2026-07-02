@@ -122,8 +122,12 @@ class NaimPlayer(MediaPlayerEntity):
 
     @property
     def available(self) -> bool:
-        """Return whether the device is available."""
-        return self._state.available
+        """Return whether the device is available.
+
+        Requires both a healthy polled/pushed state and a live WebSocket
+        connection, so device loss is reflected promptly.
+        """
+        return bool(self._state.available and self._client.connected)
 
     @property
     def supported_features(self) -> int:
