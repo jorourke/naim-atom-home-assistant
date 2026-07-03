@@ -597,14 +597,16 @@ async def test_options_flow_submit(hass: HomeAssistant) -> None:
     }
 
 
-async def test_options_flow_cannot_connect(hass: HomeAssistant) -> None:
-    """Test options flow aborts when device not reachable."""
+async def test_options_flow_volume_step_when_unreachable(hass: HomeAssistant) -> None:
+    """Test volume step can still be changed when the device is unreachable."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Test Naim",
         data={
             CONF_IP_ADDRESS: "192.168.1.100",
             CONF_NAME: "Test Naim",
+            CONF_SOURCES: {"Analog 1": "ana1"},
+            CONF_VOLUME_STEP: 3,
         },
     )
 
@@ -615,10 +617,22 @@ async def test_options_flow_cannot_connect(hass: HomeAssistant) -> None:
         flow = NaimOptionsFlow(entry)
         flow.hass = hass
 
+        # Form is still shown, with the volume step field but no sources field.
         result = await flow.async_step_init()
+        assert result["type"] == "form"
+        assert result["step_id"] == "init"
+        schema_keys = {str(key) for key in result["data_schema"].schema}
+        assert CONF_VOLUME_STEP in schema_keys
+        assert CONF_SOURCES not in schema_keys
 
-    assert result["type"] == "abort"
-    assert result["reason"] == "cannot_connect"
+        # Submitting a new volume step preserves the existing sources.
+        result = await flow.async_step_init({CONF_VOLUME_STEP: 7})
+
+    assert result["type"] == "create_entry"
+    assert result["data"] == {
+        CONF_SOURCES: {"Analog 1": "ana1"},
+        CONF_VOLUME_STEP: 7,
+    }
 
 
 async def test_options_flow_defaults_to_all_sources(hass: HomeAssistant) -> None:

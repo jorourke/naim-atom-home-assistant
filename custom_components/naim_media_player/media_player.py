@@ -32,11 +32,6 @@ PLATFORMS = [Platform.MEDIA_PLAYER]
 _LOGGER = logging.getLogger(__name__)
 
 
-def round_to_nearest(val: float, step: float = 0.01) -> float:
-    """Round a value to the nearest step."""
-    return round(val / step) * step
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -239,7 +234,7 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level."""
         volume = max(0.0, min(1.0, volume))
-        await self._client.set_volume(int(round_to_nearest(volume) * 100))
+        await self._client.set_volume(int(round(volume * 100)))
 
     async def async_volume_up(self) -> None:
         """Increase volume by one configured step."""
