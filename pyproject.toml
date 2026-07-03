@@ -16,6 +16,7 @@ dependencies = [
     "ruff>=0.8.4",
     "coverage>=7.6.8",
     "aioresponses>=0.7.7",
+    "homeassistant-cli>=1.0.0",
 ]
 
 [tool.ruff]
