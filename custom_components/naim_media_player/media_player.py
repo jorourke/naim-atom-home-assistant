@@ -32,11 +32,6 @@ PLATFORMS = [Platform.MEDIA_PLAYER]
 _LOGGER = logging.getLogger(__name__)
 
 
-def round_to_nearest(val: float, step: float = 0.01) -> float:
-    """Round a value to the nearest step."""
-    return round(val / step) * step
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -46,7 +41,10 @@ async def async_setup_entry(
     ip_address = entry.data[CONF_IP_ADDRESS]
     name = entry.data.get(CONF_NAME, DEFAULT_NAME)
     entity_id = entry.data.get("entity_id")
-    volume_step = entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP)
+    volume_step = entry.options.get(
+        CONF_VOLUME_STEP,
+        entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP),
+    )
     sources = entry.options.get(CONF_SOURCES) or entry.data.get(CONF_SOURCES)
     serial = entry.data.get(CONF_SERIAL)
 
@@ -236,19 +234,21 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level."""
         volume = max(0.0, min(1.0, volume))
-        await self._client.set_volume(int(round_to_nearest(volume) * 100))
+        await self._client.set_volume(int(round(volume * 100)))
 
     async def async_volume_up(self) -> None:
         """Increase volume by one configured step."""
-        new_volume = min(1.0, self._state.volume + self._volume_step)
-        new_volume = round_to_nearest(new_volume, step=self._volume_step)
-        await self._client.set_volume(int(new_volume * 100))
+        current_percent = int(round(self._state.volume * 100))
+        step_percent = int(round(self._volume_step * 100))
+        target_percent = min(100, current_percent + step_percent)
+        await self._client.set_volume(target_percent)
 
     async def async_volume_down(self) -> None:
         """Decrease volume by one configured step."""
-        new_volume = max(0.0, self._state.volume - self._volume_step)
-        new_volume = round_to_nearest(new_volume, step=self._volume_step)
-        await self._client.set_volume(int(new_volume * 100))
+        current_percent = int(round(self._state.volume * 100))
+        step_percent = int(round(self._volume_step * 100))
+        target_percent = max(0, current_percent - step_percent)
+        await self._client.set_volume(target_percent)
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute or unmute volume."""

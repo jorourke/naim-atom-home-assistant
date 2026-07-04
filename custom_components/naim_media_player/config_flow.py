@@ -15,7 +15,14 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
     CONF_SERIAL,
@@ -30,6 +37,19 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Shared selector for the volume step field, used by both the setup and options
+# flows. Wrap it in vol.All(..., vol.Coerce(int)) in a schema to reject/coerce
+# fractional input server-side.
+VOLUME_STEP_SELECTOR = NumberSelector(NumberSelectorConfig(min=1, max=20, step=1, mode=NumberSelectorMode.BOX))
+
+
+def _get_volume_step(config_entry: config_entries.ConfigEntry) -> int:
+    """Return the configured volume step, preferring options over data."""
+    return config_entry.options.get(
+        CONF_VOLUME_STEP,
+        config_entry.data.get(CONF_VOLUME_STEP, DEFAULT_VOLUME_STEP),
+    )
 
 
 async def async_get_available_inputs(hass, ip_address: str, port: int = DEFAULT_HTTP_PORT) -> dict[str, str] | None:
@@ -143,8 +163,8 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
                 vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
                 vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
-                vol.Optional(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
-                    vol.Coerce(float), vol.In([1, 5, 10])
+                vol.Required(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
+                    VOLUME_STEP_SELECTOR, vol.Coerce(int)
                 ),
             }
         )
@@ -298,44 +318,54 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
         """Handle the initial options step."""
         ip_address = self._config_entry.data.get(CONF_IP_ADDRESS)
 
-        # Fetch available sources from the device
+        # Try to fetch available sources from the device. The device may be
+        # unreachable; volume step can still be configured in that case, so we
+        # don't abort here — we just skip the source selection field.
         self._available_sources = await async_get_available_inputs(self.hass, ip_address) or {}
+        device_reachable = bool(self._available_sources)
 
-        if not self._available_sources:
-            # Can't reach device, show error
-            return self.async_abort(reason="cannot_connect")
+        # Currently configured sources (from options first, then data, then empty)
+        current_sources = self._config_entry.options.get(CONF_SOURCES, self._config_entry.data.get(CONF_SOURCES, {}))
 
         if user_input is not None:
-            # Build the selected sources dict
-            selected_names = user_input.get(CONF_SOURCES, [])
-            selected_sources = {name: self._available_sources[name] for name in selected_names}
-
-            return self.async_create_entry(title="", data={CONF_SOURCES: selected_sources})
-
-        # Get currently configured sources (from options first, then data, then empty)
-        current_sources = self._config_entry.options.get(CONF_SOURCES, self._config_entry.data.get(CONF_SOURCES, {}))
-        current_source_names = list(current_sources.keys()) if current_sources else []
-
-        # If no current sources, default to all available
-        if not current_source_names:
-            current_source_names = list(self._available_sources.keys())
-
-        # Build the schema
-        source_names = list(self._available_sources.keys())
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_SOURCES, default=current_source_names): SelectSelector(
-                    SelectSelectorConfig(
-                        options=source_names,
-                        multiple=True,
-                        mode=SelectSelectorMode.LIST,
-                    )
-                ),
+            data = {
+                CONF_VOLUME_STEP: int(user_input.get(CONF_VOLUME_STEP, _get_volume_step(self._config_entry))),
             }
+
+            if device_reachable:
+                # Build the selected sources dict from the refreshed device list.
+                selected_names = user_input.get(CONF_SOURCES, [])
+                data[CONF_SOURCES] = {name: self._available_sources[name] for name in selected_names}
+            else:
+                # Couldn't refresh sources from the device; keep the existing ones.
+                data[CONF_SOURCES] = current_sources
+
+            return self.async_create_entry(title="", data=data)
+
+        current_volume_step = _get_volume_step(self._config_entry)
+
+        schema_dict: dict[Any, Any] = {}
+        if device_reachable:
+            current_source_names = list(current_sources.keys()) if current_sources else []
+            # If no current sources, default to all available
+            if not current_source_names:
+                current_source_names = list(self._available_sources.keys())
+
+            source_names = list(self._available_sources.keys())
+            schema_dict[vol.Required(CONF_SOURCES, default=current_source_names)] = SelectSelector(
+                SelectSelectorConfig(
+                    options=source_names,
+                    multiple=True,
+                    mode=SelectSelectorMode.LIST,
+                )
+            )
+
+        schema_dict[vol.Required(CONF_VOLUME_STEP, default=current_volume_step)] = vol.All(
+            VOLUME_STEP_SELECTOR, vol.Coerce(int)
         )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=schema,
+            data_schema=vol.Schema(schema_dict),
             description_placeholders={"device_name": self._config_entry.data.get(CONF_NAME, "Naim Device")},
         )

@@ -253,6 +253,55 @@ async def test_volume_boundaries(mock_player):
     mock_player._client.set_volume.assert_called_once_with(0)
 
 
+async def test_volume_up_even_steps_step_3(mock_player):
+    """Step 3% from 30% produces even jumps: 33, 36, 39."""
+    mock_player._volume_step = 0.03
+    mock_player._state.volume = 0.30
+    for expected in (33, 36, 39):
+        await mock_player.async_volume_up()
+        mock_player._client.set_volume.assert_called_once_with(expected)
+        mock_player._client.set_volume.reset_mock()
+        mock_player._state.volume = expected / 100
+
+
+async def test_volume_up_even_steps_step_7(mock_player):
+    """Step 7% from 56% produces even jumps: 63, 70, 77."""
+    mock_player._volume_step = 0.07
+    mock_player._state.volume = 0.56
+    for expected in (63, 70, 77):
+        await mock_player.async_volume_up()
+        mock_player._client.set_volume.assert_called_once_with(expected)
+        mock_player._client.set_volume.reset_mock()
+        mock_player._state.volume = expected / 100
+
+
+async def test_volume_down_even_steps_step_3(mock_player):
+    """Step 3% down from 48% produces even jumps: 45, 42, 39."""
+    mock_player._volume_step = 0.03
+    mock_player._state.volume = 0.48
+    for expected in (45, 42, 39):
+        await mock_player.async_volume_down()
+        mock_player._client.set_volume.assert_called_once_with(expected)
+        mock_player._client.set_volume.reset_mock()
+        mock_player._state.volume = expected / 100
+
+
+async def test_volume_up_clamps_to_100(mock_player):
+    """Volume up near the top clamps to 100."""
+    mock_player._volume_step = 0.07
+    mock_player._state.volume = 0.96
+    await mock_player.async_volume_up()
+    mock_player._client.set_volume.assert_called_once_with(100)
+
+
+async def test_volume_down_clamps_to_0(mock_player):
+    """Volume down near the bottom clamps to 0."""
+    mock_player._volume_step = 0.07
+    mock_player._state.volume = 0.04
+    await mock_player.async_volume_down()
+    mock_player._client.set_volume.assert_called_once_with(0)
+
+
 async def test_mute(mock_player):
     """Test mute delegates to client."""
     await mock_player.async_mute_volume(True)
