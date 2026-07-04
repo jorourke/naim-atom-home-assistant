@@ -245,6 +245,24 @@ class TestNaimPlayerStateUpdate:
         assert state.media_info.image_url == "http://example.com/img.jpg"
         assert state.media_info.position == 45
 
+    async def test_update_clamps_negative_duration_to_none(self):
+        """Naim devices report -0.001 duration for endless radio streams; clamp to None."""
+        state = NaimPlayerState()
+        await state.update(source="poll", duration=-0.001)
+        assert state.media_info.duration is None
+
+    async def test_update_zero_duration_passes_through(self):
+        """Zero duration is a legitimate value and must not be clamped."""
+        state = NaimPlayerState()
+        await state.update(source="poll", duration=0)
+        assert state.media_info.duration == 0
+
+    async def test_update_positive_duration_passes_through(self):
+        """Positive durations are unaffected by the negative-duration clamp."""
+        state = NaimPlayerState()
+        await state.update(source="poll", duration=180)
+        assert state.media_info.duration == 180
+
     async def test_update_ignores_unknown_fields(self):
         """Unknown kwargs should be silently ignored."""
         state = NaimPlayerState()
@@ -562,14 +580,14 @@ class TestMediaPositionUpdatedAt:
         assert state.media_position_updated_at is not None
         assert before <= state.media_position_updated_at <= after
 
-    async def test_position_timestamp_refreshes_on_each_update(self):
-        """The timestamp should update whenever position is set, poll or websocket."""
+    async def test_position_timestamp_refreshes_when_position_changes(self):
+        """The timestamp should update whenever position genuinely changes, poll or websocket."""
         state = NaimPlayerState()
         await state.update(source="poll", position=10)
         first_timestamp = state.media_position_updated_at
 
         await asyncio.sleep(0.01)
-        await state.update(source="websocket", position=10)
+        await state.update(source="websocket", position=15)
         second_timestamp = state.media_position_updated_at
 
         assert second_timestamp > first_timestamp
@@ -579,3 +597,29 @@ class TestMediaPositionUpdatedAt:
         state = NaimPlayerState()
         await state.update(source="poll", title="Song")
         assert state.media_position_updated_at is None
+
+    async def test_unchanged_position_does_not_refresh_timestamp(self):
+        """Repeating the same position value must not rewrite the interpolation baseline."""
+        state = NaimPlayerState()
+        await state.update(source="poll", position=10)
+        first_timestamp = state.media_position_updated_at
+
+        await asyncio.sleep(0.01)
+        await state.update(source="poll", position=10)
+
+        assert state.media_position_updated_at == first_timestamp
+
+    async def test_none_position_does_not_set_or_refresh_timestamp(self):
+        """A None position (e.g. no track playing) must not create or refresh the timestamp."""
+        state = NaimPlayerState()
+        await state.update(source="poll", position=None)
+        assert state.media_position_updated_at is None
+
+        await state.update(source="poll", position=10)
+        first_timestamp = state.media_position_updated_at
+
+        await asyncio.sleep(0.01)
+        await state.update(source="poll", position=None)
+
+        assert state.media_position_updated_at == first_timestamp
+        assert state.media_info.position is None

@@ -84,6 +84,33 @@ async def test_get_value_client_error_retries_then_succeeds(hass, state):
     assert result == "success"
 
 
+async def test_get_value_malformed_json_eventually_raises(hass, state):
+    """A malformed 200 JSON body must degrade like any other failed request, not raise ValueError."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
+    with aioresponses() as mock:
+        mock.get(
+            "http://192.168.1.100:15081/test",
+            body="not json",
+            content_type="application/json",
+        )
+        with pytest.raises(NaimConnectionError):
+            await client.get_value("test", "test_var")
+
+
+async def test_get_value_malformed_json_retries_then_succeeds(hass, state):
+    """A single malformed body must be retried like a transient failure, not fatal immediately."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=2)
+    with aioresponses() as mock:
+        mock.get(
+            "http://192.168.1.100:15081/test",
+            body="not json",
+            content_type="application/json",
+        )
+        mock.get("http://192.168.1.100:15081/test", payload={"test_var": "success"})
+        result = await client.get_value("test", "test_var")
+    assert result == "success"
+
+
 async def test_set_value_success(hass, state):
     """Test successful set_value call."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
@@ -251,6 +278,29 @@ async def test_poll_state_device_off(hass, state):
     assert state.power_state == MediaPlayerState.OFF
 
 
+async def test_poll_state_tolerates_malformed_json_without_orphaning_sibling(hass, state):
+    """A malformed nowplaying body must not crash poll_state or drop the levels/room fetch."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=3)
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/power", payload={"system": "on"})
+        mock.get(
+            "http://192.168.1.100:15081/nowplaying",
+            body="not json",
+            content_type="application/json",
+        )
+        mock.get(
+            "http://192.168.1.100:15081/levels/room",
+            payload={"volume": "50", "mute": "0"},
+        )
+        # poll_state must complete without raising, and the sibling fetch's
+        # result must still be consumed.
+        await client.poll_state()
+
+    assert state.available is True
+    assert state.volume == 0.5
+    assert state.muted is False
+
+
 async def test_poll_state_device_unreachable(hass, state):
     """Test poll_state when device is unreachable."""
     state.available = True
@@ -261,8 +311,8 @@ async def test_poll_state_device_unreachable(hass, state):
     assert state.available is False
 
 
-async def test_poll_state_uses_single_retry_request_path(hass, state):
-    """Polling must use a low-retry (single attempt) request path, not the default retries."""
+async def test_poll_state_uses_single_attempt_request_path(hass, state):
+    """Polling must use a single-attempt request path, not the client's default retries."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=5)
     responses = {
         "power": {"system": "on"},
@@ -270,7 +320,7 @@ async def test_poll_state_uses_single_retry_request_path(hass, state):
         "levels/room": {"volume": "50", "mute": "0"},
     }
 
-    async def fake_request(method, endpoint, params=None, retries=None):
+    async def fake_request(method, endpoint, params=None, single_attempt=False):
         return responses[endpoint]
 
     with patch.object(client, "_request", new=AsyncMock(side_effect=fake_request)) as mock_request:
@@ -278,14 +328,14 @@ async def test_poll_state_uses_single_retry_request_path(hass, state):
 
     assert mock_request.call_args_list
     for call in mock_request.call_args_list:
-        assert call.kwargs.get("retries") == 1
+        assert call.kwargs.get("single_attempt") is True
 
 
 async def test_poll_state_fetches_nowplaying_and_levels_concurrently(hass, state):
     """nowplaying and levels/room must be fetched concurrently, not sequentially."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
 
-    async def fake_request(method, endpoint, params=None, retries=None):
+    async def fake_request(method, endpoint, params=None, single_attempt=False):
         if endpoint == "power":
             return {"system": "on"}
         await asyncio.sleep(0.2)
