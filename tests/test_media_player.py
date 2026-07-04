@@ -8,10 +8,12 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
+from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.naim_media_player.const import DOMAIN
-from custom_components.naim_media_player.media_player import NaimPlayer
+from custom_components.naim_media_player.const import CONF_SERIAL, DOMAIN
+from custom_components.naim_media_player.media_player import NaimPlayer, async_setup_entry
 
 
 @pytest.fixture
@@ -132,11 +134,22 @@ async def test_entity_id_explicit_still_honored(hass):
 
 
 async def test_unique_id_falls_back_to_ip_without_serial(hass):
-    """Without a serial, unique_id falls back to the IP-derived value for backward compat."""
+    """Without a serial or an explicit unique_id, unique_id falls back to the bare IP.
+
+    This is the same bare-IP fallback config_flow.py uses, so entity and
+    config-entry identity never drift.
+    """
     with patch("custom_components.naim_media_player.media_player.NaimClient"):
         player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
-    assert player.unique_id == "naim_192.168.1.100"
+    assert player.unique_id == "192.168.1.100"
     assert player.device_info is None
+
+
+async def test_unique_id_prefers_explicit_value_over_serial_and_ip(hass):
+    """An explicitly passed unique_id (from the config entry) takes priority."""
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        player = NaimPlayer(hass, "Test Naim", "192.168.1.100", serial="SERIAL123", unique_id="ENTRY_UNIQUE_ID")
+    assert player.unique_id == "ENTRY_UNIQUE_ID"
 
 
 async def test_unique_id_uses_serial_when_available(hass):
@@ -354,3 +367,53 @@ async def test_cleanup(mock_player):
     """Test cleanup stops websocket."""
     await mock_player.async_will_remove_from_hass()
     mock_player._client.stop_websocket.assert_called_once()
+
+
+# --- Config-entry / entity unique_id identity tests ---
+
+
+async def test_async_setup_entry_unique_id_matches_entry_for_serial(hass):
+    """The entity's unique_id must equal the config entry's unique_id in the serial case."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="SERIAL123",
+        data={
+            CONF_IP_ADDRESS: "192.168.1.100",
+            CONF_NAME: "Test Naim",
+            CONF_SERIAL: "SERIAL123",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    added_entities: list[NaimPlayer] = []
+
+    def fake_add_entities(entities, update_before_add=False):
+        added_entities.extend(entities)
+
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        await async_setup_entry(hass, entry, fake_add_entities)
+
+    assert added_entities[0].unique_id == entry.unique_id == "SERIAL123"
+
+
+async def test_async_setup_entry_unique_id_matches_entry_for_ip_fallback(hass):
+    """The entity's unique_id must equal the config entry's unique_id in the IP-fallback case."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="192.168.1.100",
+        data={
+            CONF_IP_ADDRESS: "192.168.1.100",
+            CONF_NAME: "Test Naim",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    added_entities: list[NaimPlayer] = []
+
+    def fake_add_entities(entities, update_before_add=False):
+        added_entities.extend(entities)
+
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        await async_setup_entry(hass, entry, fake_add_entities)
+
+    assert added_entities[0].unique_id == entry.unique_id == "192.168.1.100"

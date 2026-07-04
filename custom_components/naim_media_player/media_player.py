@@ -49,7 +49,7 @@ async def async_setup_entry(
     serial = entry.data.get(CONF_SERIAL)
 
     async_add_entities(
-        [NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources, serial)],
+        [NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources, serial, entry.unique_id)],
         True,
     )
 
@@ -78,8 +78,16 @@ class NaimPlayer(MediaPlayerEntity):
         volume_step: float = DEFAULT_VOLUME_STEP,
         sources: dict[str, str] | None = None,
         serial: str | None = None,
+        unique_id: str | None = None,
     ) -> None:
-        """Initialize the media player."""
+        """Initialize the media player.
+
+        `unique_id` should be the config entry's unique_id (computed once by
+        config_flow.py from `serial or ip_address`), so the entity never
+        derives a different identity than the config entry. If omitted (e.g.
+        direct instantiation), it falls back to the same `serial or
+        ip_address` rule to avoid a second, competing fallback string.
+        """
         _LOGGER.info("Initializing Naim media player: %s at %s", name, ip_address)
         self._hass = hass
         self._name = name
@@ -90,7 +98,7 @@ class NaimPlayer(MediaPlayerEntity):
             self.entity_id = f"media_player.{entity_id}"
         # Otherwise leave entity_id unset so Home Assistant derives it from the name.
 
-        self._attr_unique_id = serial if serial else f"naim_{ip_address}"
+        self._attr_unique_id = unique_id or serial or ip_address
         self._attr_device_info = (
             DeviceInfo(
                 identifiers={(DOMAIN, serial)},
