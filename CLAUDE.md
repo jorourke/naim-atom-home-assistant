@@ -4,9 +4,9 @@
 
 This is a **HACS (Home Assistant Community Store)** custom integration that provides local network control of **Naim audio devices** (primarily Naim Atom). The integration creates a fully-featured media player entity in Home Assistant with real-time status updates.
 
-**Version:** 0.2.0
+**Version:** 0.5.1 (see `manifest.json` for the current release)
 **Type:** Local IoT integration (no cloud dependency)
-**Communication:** Dual protocol (HTTP API + WebSocket)
+**Communication:** Dual protocol (HTTP API + WebSocket), consolidated into one client
 
 ## Architecture
 
@@ -15,22 +15,25 @@ Home Assistant Media Player Entity
          ↓
     NaimPlayer (media_player.py)
          ↓
+    NaimClient (client.py)
     ┌────────────┬────────────┐
     ↓            ↓            ↓
-HTTP Client  WebSocket   State Manager
-(15081)      (4545)      (thread-safe)
-    ↓            ↓            ↓
+HTTP requests  WebSocket   NaimPlayerState (state.py)
+(15081)        (4545)      (asyncio.Lock, single source of truth)
+    ↓            ↓
         Naim Atom Device
 ```
 
 ### Core Components
 
-- **`media_player.py`** (690 lines) - Main entity implementation with debounce logic
-- **`client.py`** (241 lines) - HTTP API client + WebSocket client
-- **`websocket.py`** (89 lines) - Low-level TCP socket wrapper
-- **`config_flow.py`** (140 lines) - UI configuration flow
+- **`media_player.py`** - Thin HA entity adapter; delegates I/O to `client.py` and reads all state from `state.py`
+- **`client.py`** - Consolidated HTTP API client + WebSocket listener (`NaimClient`); owns retries/backoff and WebSocket reconnect/buffering
+- **`state.py`** - `NaimPlayerState`/`MediaInfo`; single source of truth for device state, updated only via `NaimPlayerState.update(...)` under an `asyncio.Lock`, with debounce and value-guard logic
+- **`config_flow.py`** - UI setup + options flow; device discovery (serial, inputs) and identity (unique_id) resolution
 - **`const.py`** - Configuration constants (ports, intervals, steps)
 - **`exceptions.py`** - Custom exception hierarchy
+
+There is no separate `websocket.py` module — the WebSocket listener, reconnect loop, and buffered JSON parsing live in `client.py` alongside the HTTP methods.
 
 ### Communication Protocols
 
@@ -57,23 +60,24 @@ Used for **real-time status updates**:
 
 ### Debounce Mechanism (Critical)
 ```python
-# Prevent feedback loops between UI actions and WebSocket updates
-_last_user_volume_action: float  # 2 second window
-_last_user_mute_action: float    # 2 second window
-_debounce_timeout: float = 2.0   # Ignore device echo
-_update_debounce_timeout: float = 1.0  # Rate limit polling
+# state.py — NaimPlayerState
+DEBOUNCED_FIELDS = {"volume", "muted"}
+_debounce_timestamps: dict[str, float]  # per-field, set on source="user" updates
+_debounce_timeout: float = 2.0          # 2 second window; non-"user" updates to a
+                                         # debounced field are ignored inside this window
 ```
 
 **Why:** When user changes volume via UI → HTTP command → device updates → WebSocket echoes change → UI would flicker. Debounce prevents this.
 
 ### Error Handling Pattern
+`client.py` never optimistically writes state and then reverts it. Each setter sends the HTTP
+command first; `NaimPlayerState.update(...)` (with `source="user"`) only runs after the command
+succeeds. If the HTTP call raises, the exception propagates and state is left untouched — a
+later poll or WebSocket update is free to correct it:
 ```python
-try:
-    await self._api_client.set_value(...)
-except aiohttp.ClientError as error:
-    _LOGGER.error("Error: %s", error)
-    # Revert optimistic state update
-    await self._state.update(old_value)
+async def set_volume(self, volume: int) -> None:
+    await self.set_value("levels/room", {"volume": volume})  # raises on failure
+    await self._state.update(source="user", volume=volume / 100)  # only reached on success
 ```
 
 ### Retry Logic
@@ -81,10 +85,14 @@ except aiohttp.ClientError as error:
 for retry in range(max_retries):
     try:
         return await operation()
-    except Exception:
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         if retry < max_retries - 1:
             await asyncio.sleep(2**retry)  # Exponential backoff
 ```
+Polling (`poll_state`) passes `single_attempt=True` through `_get_json_safe`/`_get_json`/`_request`
+so a slow/unreachable device never blocks `async_update` for the full retry duration; the safe
+path (`_get_json_safe`) always returns `None` on failure instead of raising, and malformed JSON
+bodies are treated the same as any other failed attempt (never escape `poll_state`).
 
 ### State Management
 ```python
@@ -136,9 +144,12 @@ uv run ruff check custom_components/ tests/
 ```
 
 **Test structure:**
-- `test_client.py` - API client and WebSocket tests
+- `test_client.py` - HTTP client and WebSocket tests
+- `test_state.py` - `NaimPlayerState`/`MediaInfo` behavior tests
 - `test_media_player.py` - Entity behavior tests
 - `test_config_flow.py` - Configuration UI tests
+- `test_init.py` - Integration setup/options-reload tests
+- `test_ha_stage.py` - `scripts/ha_stage.py` deploy helper tests (mocks subprocess/HTTP)
 - `conftest.py` - Shared fixtures
 
 **Mocking:**
@@ -150,27 +161,32 @@ uv run ruff check custom_components/ tests/
 
 ### Adding a New Source
 
-1. Update `SOURCE_TO_INPUT_MAP` in media_player.py:
+Sources are normally discovered live from the device's `/inputs` endpoint during config flow
+setup (and refreshed in the options flow), and stored per-entry as `CONF_SOURCES`. Update
+`NaimPlayer.DEFAULT_SOURCE_MAP` in media_player.py only to extend the hardcoded fallback used
+when a device's inputs can't be discovered:
 ```python
-SOURCE_TO_INPUT_MAP = {
+DEFAULT_SOURCE_MAP = {
     "New Source": "newsource",  # Add here
     # ...
 }
 ```
 
-2. Add to config flow if needed (config_flow.py)
-
 ### Changing Debounce Timing
 
-Edit constants in media_player.py:
+Edit the constant in state.py:
 ```python
-_debounce_timeout: float = 2.0  # User action ignore window
-_update_debounce_timeout: float = 1.0  # Polling rate limit
+_debounce_timeout: float = 2.0  # User action ignore window, applies to DEBOUNCED_FIELDS
 ```
+
+### Changing the Volume Step
+
+The volume step is user-configurable (1-20%) via `CONF_VOLUME_STEP` in the config/options flow;
+`DEFAULT_VOLUME_STEP` in const.py is only the pre-filled default (5%).
 
 ### Adding New Device Commands
 
-1. Add method to `NaimApiClient` in client.py
+1. Add method to `NaimClient` in client.py
 2. Add corresponding method to `NaimPlayer` entity
 3. Update supported features flags if needed
 
@@ -178,10 +194,13 @@ _update_debounce_timeout: float = 1.0  # Polling rate limit
 
 ```python
 DOMAIN = "naim_media_player"
-DEFAULT_PORT = 4545           # WebSocket
-DEFAULT_HTTP_PORT = 15081     # HTTP API
-VOLUME_STEP = 0.05            # 5% default
-SOCKET_RECONNECT_INTERVAL = 5  # seconds
+DEFAULT_PORT = 4545              # WebSocket
+DEFAULT_HTTP_PORT = 15081        # HTTP API
+CONF_VOLUME_STEP = "volume_step" # user-configurable, 1-20 (integer percent)
+DEFAULT_VOLUME_STEP = 5          # 5% default
+CONF_SOURCES = "sources"         # discovered/selected input map, stored per config entry
+CONF_SERIAL = "serial"           # device serial, used for identity + device registry
+SOCKET_RECONNECT_INTERVAL = 5    # seconds
 ```
 
 ## Naim Device API Reference
@@ -243,23 +262,28 @@ SOCKET_RECONNECT_INTERVAL = 5  # seconds
 
 ```
 custom_components/naim_media_player/
-├── __init__.py           # Platform setup
+├── __init__.py           # Integration setup/unload, options-reload listener
 ├── const.py              # Constants
 ├── exceptions.py         # Custom exceptions
-├── client.py             # HTTP + WebSocket clients
-├── websocket.py          # Low-level socket wrapper
+├── state.py              # NaimPlayerState / MediaInfo — single source of truth
+├── client.py             # Consolidated HTTP API client + WebSocket listener
 ├── media_player.py       # Main entity implementation
-├── config_flow.py        # UI configuration
+├── config_flow.py        # UI configuration + options flow
 ├── manifest.json         # Integration metadata
 └── translations/
     └── en.json           # UI strings
 
+scripts/
+└── ha_stage.py           # Deploy helper (needs HASS_SERVER/HASS_TOKEN; not part of the test gates)
+
 tests/
 ├── conftest.py           # Pytest fixtures
 ├── test_client.py        # Client tests
+├── test_state.py         # State management tests
 ├── test_media_player.py  # Entity tests
 ├── test_config_flow.py   # Config flow tests
-└── test_websocket.py     # WebSocket tests
+├── test_init.py          # Integration setup tests
+└── test_ha_stage.py      # Deploy helper tests (mocked)
 ```
 
 ## Dependencies
@@ -268,6 +292,12 @@ tests/
 
 ## Version History
 
+- **v0.5.x** - Reliability/quality fixes (issue #21): deterministic serial/IP identity, unified
+  entity/config-entry unique_id, position-timestamp and negative-duration guards, malformed-JSON
+  tolerance in polling
+- **v0.5.0** - Configurable integer volume step (1-20%) with options-flow reconfigure support
+- **v0.4.x** - Device-registry integration, serial-based unique_id, options-flow reload,
+  `state.py`/`client.py` consolidation (WebSocket folded into `client.py`, `websocket.py` removed)
 - **v0.2.0** - WebSocket real-time updates, debounce mechanism, enhanced error handling
 - **v0.1.1** - Config flow UI, improved setup
 - **v0.1.0** - Initial release
