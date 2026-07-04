@@ -52,45 +52,60 @@ def _get_volume_step(config_entry: config_entries.ConfigEntry) -> int:
     )
 
 
+async def _async_fetch_device_json(
+    hass, ip_address: str, path: str, port: int = DEFAULT_HTTP_PORT
+) -> dict[str, Any] | None:
+    """Fetch and parse JSON from a Naim device HTTP endpoint.
+
+    Shared by `async_get_available_inputs` and `async_get_device_serial`.
+    Returns the parsed JSON body, or None on any failure (non-200 status,
+    timeout, client error, or unexpected error).
+    """
+    try:
+        session = async_get_clientsession(hass)
+        timeout = aiohttp.ClientTimeout(total=10)
+        url = f"http://{ip_address}:{port}/{path}"
+
+        async with session.get(url, timeout=timeout) as response:
+            if response.status != 200:
+                _LOGGER.warning("Failed to fetch %s: HTTP %s", path, response.status)
+                return None
+
+            return await response.json()
+
+    except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+        _LOGGER.debug("Failed to fetch %s from %s: %s", path, ip_address, error)
+        return None
+    except Exception as error:
+        _LOGGER.warning("Unexpected error fetching %s: %s", path, error)
+        return None
+
+
 async def async_get_available_inputs(hass, ip_address: str, port: int = DEFAULT_HTTP_PORT) -> dict[str, str] | None:
     """Fetch available inputs from the Naim device.
 
     Returns a dict mapping display name to input ID, or None on failure.
     Only returns inputs with selectable="1".
     """
-    try:
-        session = async_get_clientsession(hass)
-        timeout = aiohttp.ClientTimeout(total=10)
-        url = f"http://{ip_address}:{port}/inputs"
-
-        async with session.get(url, timeout=timeout) as response:
-            if response.status != 200:
-                _LOGGER.warning("Failed to fetch inputs: HTTP %s", response.status)
-                return None
-
-            data = await response.json()
-            children = data.get("children", [])
-
-            # Filter to selectable inputs and build the map
-            sources = {}
-            for child in children:
-                if child.get("selectable") == "1":
-                    name = child.get("name")
-                    ussi = child.get("ussi", "")
-                    # Extract input ID from ussi (e.g., "inputs/ana1" -> "ana1")
-                    input_id = ussi.split("/")[-1] if "/" in ussi else ussi
-                    if name and input_id:
-                        sources[name] = input_id
-
-            _LOGGER.debug("Discovered %d selectable inputs: %s", len(sources), list(sources.keys()))
-            return sources
-
-    except (aiohttp.ClientError, asyncio.TimeoutError) as error:
-        _LOGGER.debug("Failed to fetch inputs from %s: %s", ip_address, error)
+    data = await _async_fetch_device_json(hass, ip_address, "inputs", port)
+    if data is None:
         return None
-    except Exception as error:
-        _LOGGER.warning("Unexpected error fetching inputs: %s", error)
-        return None
+
+    children = data.get("children", [])
+
+    # Filter to selectable inputs and build the map
+    sources = {}
+    for child in children:
+        if child.get("selectable") == "1":
+            name = child.get("name")
+            ussi = child.get("ussi", "")
+            # Extract input ID from ussi (e.g., "inputs/ana1" -> "ana1")
+            input_id = ussi.split("/")[-1] if "/" in ussi else ussi
+            if name and input_id:
+                sources[name] = input_id
+
+    _LOGGER.debug("Discovered %d selectable inputs: %s", len(sources), list(sources.keys()))
+    return sources
 
 
 async def async_get_device_serial(hass, ip_address: str, port: int = DEFAULT_HTTP_PORT) -> str | None:
@@ -98,26 +113,12 @@ async def async_get_device_serial(hass, ip_address: str, port: int = DEFAULT_HTT
 
     Returns the serial as a string, or None if it could not be determined.
     """
-    try:
-        session = async_get_clientsession(hass)
-        timeout = aiohttp.ClientTimeout(total=10)
-        url = f"http://{ip_address}:{port}/system"
-
-        async with session.get(url, timeout=timeout) as response:
-            if response.status != 200:
-                _LOGGER.warning("Failed to fetch device info: HTTP %s", response.status)
-                return None
-
-            data = await response.json()
-            serial = data.get("serial")
-            return str(serial) if serial else None
-
-    except (aiohttp.ClientError, asyncio.TimeoutError) as error:
-        _LOGGER.debug("Failed to fetch serial from %s: %s", ip_address, error)
+    data = await _async_fetch_device_json(hass, ip_address, "system", port)
+    if data is None:
         return None
-    except Exception as error:
-        _LOGGER.warning("Unexpected error fetching device serial: %s", error)
-        return None
+
+    serial = data.get("serial")
+    return str(serial) if serial else None
 
 
 def valid_ip_address(value: str) -> bool:
@@ -241,17 +242,35 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # At this point, the IP is valid and the device is reachable.
+        ip = validated_input[CONF_IP_ADDRESS]
+
+        # A device re-added after the serial-based unique_id migration must
+        # still be recognized as already configured: an existing entry keyed
+        # by the legacy bare-IP unique_id (or any entry stored against this
+        # IP) is the same device even if this run's /system fetch resolves
+        # differently. Checking the stored IP first keeps identity
+        # deterministic and prevents a duplicate entry regardless of whether
+        # the existing entry was keyed by serial or by IP.
+        for entry in self._async_current_entries():
+            if entry.data.get(CONF_IP_ADDRESS) == ip:
+                return self.async_abort(reason="already_configured")
+
         # Prefer a stable unique ID based on the device serial (survives DHCP
-        # address changes); fall back to the IP address if it can't be fetched.
-        serial = await async_get_device_serial(self.hass, validated_input[CONF_IP_ADDRESS])
-        await self.async_set_unique_id(serial or validated_input[CONF_IP_ADDRESS])
+        # address changes); fall back to the IP address if it can't be
+        # fetched. Fetch the serial and the available inputs concurrently to
+        # avoid two sequential 10s-timeout round-trips during setup.
+        serial, self._available_sources = await asyncio.gather(
+            async_get_device_serial(self.hass, ip),
+            async_get_available_inputs(self.hass, ip),
+        )
+        self._available_sources = self._available_sources or {}
+        await self.async_set_unique_id(serial or ip)
         self._abort_if_unique_id_configured()
 
-        # Store the user input and try to discover sources
+        # Store the user input
         self._user_input = validated_input
         if serial:
             self._user_input[CONF_SERIAL] = serial
-        self._available_sources = await async_get_available_inputs(self.hass, validated_input[CONF_IP_ADDRESS]) or {}
 
         # If we discovered sources, show the selection step
         if self._available_sources:
