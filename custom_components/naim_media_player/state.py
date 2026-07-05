@@ -101,6 +101,11 @@ class NaimPlayerState:
             for key, value in kwargs.items():
                 attr_name = "source" if key == "source_name" else key
 
+                if attr_name == "duration" and isinstance(value, (int, float)) and value < 0:
+                    # Naim devices report a negative duration (e.g. -0.001) for
+                    # endless streams such as web radio; treat as "no duration".
+                    value = None
+
                 if attr_name in MEDIA_INFO_FIELDS:
                     target = self.media_info
                     target_attr = attr_name
@@ -127,8 +132,8 @@ class NaimPlayerState:
                     setattr(target, target_attr, value)
                     changed = True
 
-                if attr_name == "position":
-                    self.media_info.position_updated_at = dt_util.utcnow()
+                    if attr_name == "position" and value is not None:
+                        self.media_info.position_updated_at = dt_util.utcnow()
 
         if changed and self._on_change:
             result = self._on_change()

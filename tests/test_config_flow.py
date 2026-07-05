@@ -1,6 +1,7 @@
 """Test the Naim Media Player config flow."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.naim_media_player.config_flow import (
     NaimConfigFlow,
     NaimOptionsFlow,
+    _async_fetch_device_json,
     async_get_available_inputs,
     async_get_device_serial,
 )
@@ -262,6 +264,40 @@ async def test_async_get_available_inputs_unexpected_error(hass: HomeAssistant) 
     assert result is None
 
 
+# Tests for the shared HTTP-fetch helper used by both discovery functions
+
+
+async def test_available_inputs_and_serial_share_fetch_helper(hass: HomeAssistant) -> None:
+    """Both discovery functions must delegate to the same fetch helper, not duplicate the scaffolding."""
+    with patch(
+        "custom_components.naim_media_player.config_flow._async_fetch_device_json",
+        new=AsyncMock(return_value=None),
+    ) as mock_fetch:
+        await async_get_available_inputs(hass, "192.168.1.100")
+        await async_get_device_serial(hass, "192.168.1.100")
+
+    assert mock_fetch.await_count == 2
+    fetched_paths = {call.args[2] for call in mock_fetch.await_args_list}
+    assert fetched_paths == {"inputs", "system"}
+
+
+async def test_fetch_device_json_returns_none_on_http_error(hass: HomeAssistant) -> None:
+    """The shared helper returns None on a non-200 response."""
+    mock_response = AsyncMock()
+    mock_response.status = 500
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        result = await _async_fetch_device_json(hass, "192.168.1.100", "system")
+
+    assert result is None
+
+
 # Tests for async_get_device_serial
 
 
@@ -409,6 +445,156 @@ async def test_form_falls_back_to_ip_when_serial_unavailable(hass: HomeAssistant
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     assert entry.unique_id == "192.168.1.100"
+
+
+async def test_form_fetches_serial_and_inputs_concurrently(hass: HomeAssistant) -> None:
+    """Serial and inputs discovery must run concurrently, not as two sequential round-trips."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+
+    mock_writer = MagicMock()
+    mock_writer.close.return_value = None
+    mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
+    mock_writer.wait_closed.return_value.set_result(None)
+
+    async def slow_serial(*_args, **_kwargs):
+        await asyncio.sleep(0.2)
+        return "SERIAL123"
+
+    async def slow_inputs(*_args, **_kwargs):
+        await asyncio.sleep(0.2)
+        return None
+
+    with (
+        patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            side_effect=slow_inputs,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
+            side_effect=slow_serial,
+        ),
+    ):
+        start = time.monotonic()
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_IP_ADDRESS: "192.168.1.100",
+                CONF_NAME: "Test Naim",
+                "entity_id": "test_naim",
+                CONF_VOLUME_STEP: 5,
+            },
+        )
+        elapsed = time.monotonic() - start
+        await hass.async_block_till_done()
+
+    assert result2["type"] == "create_entry"
+    assert elapsed < 0.35
+
+
+# Tests for duplicate-entry detection across the serial/IP identity migration
+
+
+async def test_reconfigure_ip_keyed_entry_aborts_even_when_serial_now_available(
+    hass: HomeAssistant,
+) -> None:
+    """A pre-migration entry keyed by bare IP must be recognized even if this run fetches a serial.
+
+    Without a same-IP check, `async_set_unique_id(serial or ip)` would compute a
+    different unique_id than the existing IP-keyed entry and create a duplicate.
+    """
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="192.168.1.100",
+        title="Test Naim",
+        data={CONF_IP_ADDRESS: "192.168.1.100", CONF_NAME: "Test Naim"},
+    )
+    existing.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+
+    mock_writer = MagicMock()
+    mock_writer.close.return_value = None
+    mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
+    mock_writer.wait_closed.return_value.set_result(None)
+
+    with (
+        patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
+            return_value="SERIAL123",
+        ),
+    ):
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_IP_ADDRESS: "192.168.1.100",
+                CONF_NAME: "Test Naim",
+                "entity_id": "test_naim",
+                CONF_VOLUME_STEP: 5,
+            },
+        )
+
+    assert result2["type"] == "abort"
+    assert result2["reason"] == "already_configured"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+
+
+async def test_reconfigure_serial_keyed_entry_aborts_even_when_serial_fetch_is_flaky(
+    hass: HomeAssistant,
+) -> None:
+    """A serial-keyed entry must still be recognized when a later /system fetch flakily fails.
+
+    The IP match must catch this case so identity never silently flips from
+    serial back to a bare-IP duplicate.
+    """
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="SERIAL123",
+        title="Test Naim",
+        data={
+            CONF_IP_ADDRESS: "192.168.1.100",
+            CONF_NAME: "Test Naim",
+            CONF_SERIAL: "SERIAL123",
+        },
+    )
+    existing.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+
+    mock_writer = MagicMock()
+    mock_writer.close.return_value = None
+    mock_writer.wait_closed = MagicMock(return_value=asyncio.Future())
+    mock_writer.wait_closed.return_value.set_result(None)
+
+    with (
+        patch("asyncio.open_connection", return_value=(MagicMock(), mock_writer)),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+            return_value=None,
+        ),
+        patch(
+            "custom_components.naim_media_player.config_flow.async_get_device_serial",
+            return_value=None,
+        ),
+    ):
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_IP_ADDRESS: "192.168.1.100",
+                CONF_NAME: "Test Naim",
+                "entity_id": "test_naim",
+                CONF_VOLUME_STEP: 5,
+            },
+        )
+
+    assert result2["type"] == "abort"
+    assert result2["reason"] == "already_configured"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
 
 
 # Tests for source selection step

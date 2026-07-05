@@ -110,7 +110,7 @@ class NaimClient:
         unreachable device; nowplaying and levels/room are fetched
         concurrently to keep polling fast.
         """
-        power = await self._get_json_safe("power", retries=1)
+        power = await self._get_json_safe("power", single_attempt=True)
         if power is None:
             await self._state.update(source="poll", available=False)
             return
@@ -122,8 +122,8 @@ class NaimClient:
             return
 
         nowplaying, levels = await asyncio.gather(
-            self._get_json_safe("nowplaying", retries=1),
-            self._get_json_safe("levels/room", retries=1),
+            self._get_json_safe("nowplaying", single_attempt=True),
+            self._get_json_safe("levels/room", single_attempt=True),
         )
         nowplaying = nowplaying or {}
         levels = levels or {}
@@ -253,14 +253,14 @@ class NaimClient:
 
         await self._state.update(source="websocket", **updates)
 
-    async def _get_json(self, endpoint: str, retries: int | None = None) -> dict[str, Any]:
+    async def _get_json(self, endpoint: str, single_attempt: bool = False) -> dict[str, Any]:
         """Get JSON from an endpoint with retries."""
-        return await self._request("get", endpoint, retries=retries)
+        return await self._request("get", endpoint, single_attempt=single_attempt)
 
-    async def _get_json_safe(self, endpoint: str, retries: int | None = None) -> dict[str, Any] | None:
+    async def _get_json_safe(self, endpoint: str, single_attempt: bool = False) -> dict[str, Any] | None:
         """Get JSON from an endpoint, returning None on failure."""
         try:
-            return await self._get_json(endpoint, retries=retries)
+            return await self._get_json(endpoint, single_attempt=single_attempt)
         except NaimConnectionError as error:
             _LOGGER.debug("Cannot reach device at %s for %s: %s", self._host, endpoint, error)
             return None
@@ -270,16 +270,17 @@ class NaimClient:
         method: str,
         endpoint: str,
         params: dict[str, str | int | bool] | None = None,
-        retries: int | None = None,
+        single_attempt: bool = False,
     ) -> dict[str, Any]:
         """Make an HTTP request with retries.
 
-        `retries` overrides the client's default max_retries; pass a low
-        value (e.g. 1) for latency-sensitive callers like polling.
+        `single_attempt` skips the retry/backoff loop for latency-sensitive
+        callers like polling, where a single failed attempt should surface
+        immediately rather than block for the full retry duration.
         """
         url = f"http://{self._host}:{self._http_port}/{endpoint}"
         request = self._session.get if method == "get" else self._session.put
-        max_retries = retries if retries is not None else self._max_retries
+        max_retries = 1 if single_attempt else self._max_retries
 
         for retry in range(max_retries):
             try:
@@ -300,6 +301,18 @@ class NaimClient:
             except aiohttp.ClientError as error:
                 _LOGGER.warning(
                     "Client error on %s %s (attempt %d/%d): %s",
+                    method.upper(),
+                    endpoint,
+                    retry + 1,
+                    max_retries,
+                    error,
+                )
+            except ValueError as error:
+                # A malformed 200 body (e.g. invalid JSON) raises ValueError/
+                # json.JSONDecodeError from response.json(); treat it like any
+                # other failed attempt instead of letting it escape.
+                _LOGGER.warning(
+                    "Malformed response body on %s %s (attempt %d/%d): %s",
                     method.upper(),
                     endpoint,
                     retry + 1,
