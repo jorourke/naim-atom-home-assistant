@@ -28,26 +28,26 @@ async def test_client_init(hass, state):
     assert client._ws_port == 4545
 
 
-async def test_get_value_success(hass, state):
-    """Test successful get_value call."""
+async def test_get_json_success(hass, state):
+    """Test a successful JSON GET."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/test", payload={"test_var": "test_value"})
-        result = await client.get_value("test", "test_var")
-    assert result == "test_value"
+        result = await client._get_json("test")
+    assert result == {"test_var": "test_value"}
 
 
-async def test_get_value_client_error(hass, state):
-    """Test get_value with client error eventually raises after retries are exhausted."""
+async def test_get_json_client_error(hass, state):
+    """Test _get_json with client error eventually raises after retries are exhausted."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/test", exception=aiohttp.ClientError())
         with pytest.raises(NaimConnectionError):
-            await client.get_value("test", "test_var")
+            await client._get_json("test")
 
 
-async def test_get_value_timeout_with_retries(hass, state):
-    """Test get_value timeout with retries."""
+async def test_get_json_timeout_with_retries(hass, state):
+    """Test _get_json timeout with retries."""
     client = NaimClient(
         hass,
         "192.168.1.100",
@@ -61,30 +61,30 @@ async def test_get_value_timeout_with_retries(hass, state):
         mock.get("http://192.168.1.100:15081/test", exception=asyncio.TimeoutError())
         mock.get("http://192.168.1.100:15081/test", exception=asyncio.TimeoutError())
         with pytest.raises(NaimConnectionError):
-            await client.get_value("test", "test_var")
+            await client._get_json("test")
 
 
-async def test_get_value_retry_then_success(hass, state):
-    """Test get_value that fails then succeeds on retry."""
+async def test_get_json_retry_then_success(hass, state):
+    """Test _get_json that fails then succeeds on retry."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=3)
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/test", exception=asyncio.TimeoutError())
         mock.get("http://192.168.1.100:15081/test", payload={"test_var": "success"})
-        result = await client.get_value("test", "test_var")
-    assert result == "success"
+        result = await client._get_json("test")
+    assert result == {"test_var": "success"}
 
 
-async def test_get_value_client_error_retries_then_succeeds(hass, state):
+async def test_get_json_client_error_retries_then_succeeds(hass, state):
     """aiohttp.ClientError must be retried with backoff, not raised immediately."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=2)
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/test", exception=aiohttp.ClientError())
         mock.get("http://192.168.1.100:15081/test", payload={"test_var": "success"})
-        result = await client.get_value("test", "test_var")
-    assert result == "success"
+        result = await client._get_json("test")
+    assert result == {"test_var": "success"}
 
 
-async def test_get_value_malformed_json_eventually_raises(hass, state):
+async def test_get_json_malformed_body_eventually_raises(hass, state):
     """A malformed 200 JSON body must degrade like any other failed request, not raise ValueError."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=1)
     with aioresponses() as mock:
@@ -94,10 +94,10 @@ async def test_get_value_malformed_json_eventually_raises(hass, state):
             content_type="application/json",
         )
         with pytest.raises(NaimConnectionError):
-            await client.get_value("test", "test_var")
+            await client._get_json("test")
 
 
-async def test_get_value_malformed_json_retries_then_succeeds(hass, state):
+async def test_get_json_malformed_body_retries_then_succeeds(hass, state):
     """A single malformed body must be retried like a transient failure, not fatal immediately."""
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state, max_retries=2)
     with aioresponses() as mock:
@@ -107,8 +107,8 @@ async def test_get_value_malformed_json_retries_then_succeeds(hass, state):
             content_type="application/json",
         )
         mock.get("http://192.168.1.100:15081/test", payload={"test_var": "success"})
-        result = await client.get_value("test", "test_var")
-    assert result == "success"
+        result = await client._get_json("test")
+    assert result == {"test_var": "success"}
 
 
 async def test_set_value_success(hass, state):
@@ -116,8 +116,7 @@ async def test_set_value_success(hass, state):
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
     with aioresponses() as mock:
         mock.put("http://192.168.1.100:15081/settings?volume=50", status=200)
-        result = await client.set_value("settings", {"volume": 50})
-    assert result is True
+        await client.set_value("settings", {"volume": 50})
 
 
 async def test_set_value_client_error(hass, state):
@@ -137,8 +136,7 @@ async def test_send_command_success(hass, state):
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/controls/play?cmd=play", status=200)
-        result = await client.send_command("controls/play", "play")
-    assert result is True
+        await client.send_command("controls/play", "play")
 
 
 async def test_send_command_client_error(hass, state):
@@ -158,8 +156,7 @@ async def test_select_input(hass, state):
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/inputs/analog1?cmd=select", status=200)
-        result = await client.select_input("analog1")
-    assert result is True
+        await client.select_input("analog1")
 
 
 async def test_set_volume_updates_state_and_device(hass, state):
@@ -261,12 +258,12 @@ async def test_poll_state_device_on(hass, state):
     assert state.volume == 0.75
     assert state.muted is False
     assert state.source == "spotify"
-    assert state.media_title == "Test Song"
-    assert state.media_artist == "Test Artist"
-    assert state.media_album == "Test Album"
-    assert state.media_duration == 300
-    assert state.media_position == 120
-    assert state.media_image_url == "http://example.com/art.jpg"
+    assert state.media_info.title == "Test Song"
+    assert state.media_info.artist == "Test Artist"
+    assert state.media_info.album == "Test Album"
+    assert state.media_info.duration == 300
+    assert state.media_info.position == 120
+    assert state.media_info.image_url == "http://example.com/art.jpg"
 
 
 async def test_poll_state_device_off(hass, state):
@@ -581,10 +578,10 @@ async def test_websocket_updates_metadata(hass, state):
     )
 
     assert state.playing_state == MediaPlayerState.PLAYING
-    assert state.media_title == "Live Track"
-    assert state.media_artist == "Live Artist"
-    assert state.media_album == "Live Album"
-    assert state.media_duration == 120
-    assert state.media_position == 45
-    assert state.media_image_url == "http://example.com/icon.jpg"
+    assert state.media_info.title == "Live Track"
+    assert state.media_info.artist == "Live Artist"
+    assert state.media_info.album == "Live Album"
+    assert state.media_info.duration == 120
+    assert state.media_info.position == 45
+    assert state.media_info.image_url == "http://example.com/icon.jpg"
     assert state.source == "Spotify"

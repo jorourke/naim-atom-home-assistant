@@ -5,8 +5,8 @@ import inspect
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, IntEnum
 
 from homeassistant.components.media_player import MediaPlayerState
 from homeassistant.util import dt as dt_util
@@ -16,58 +16,48 @@ _LOGGER = logging.getLogger(__name__)
 DEBOUNCED_FIELDS = {"volume", "muted"}
 MEDIA_INFO_FIELDS = {"title", "artist", "album", "duration", "image_url", "position"}
 
+# Transport-state mappings. The HTTP API reports integers (1=stopped,
+# 2=playing, 3=paused); WebSocket messages report strings.
+TRANSPORT_INT_TO_HA_STATE = {
+    1: MediaPlayerState.IDLE,
+    2: MediaPlayerState.PLAYING,
+    3: MediaPlayerState.PAUSED,
+}
 
+TRANSPORT_STRING_TO_HA_STATE = {
+    "playing": MediaPlayerState.PLAYING,
+    "paused": MediaPlayerState.PAUSED,
+    "stopped": MediaPlayerState.IDLE,
+}
+
+
+def transport_int_to_ha_state(transport) -> MediaPlayerState:
+    """Map a Naim transport integer to a Home Assistant state (ON if unknown)."""
+    try:
+        return TRANSPORT_INT_TO_HA_STATE.get(int(transport), MediaPlayerState.ON)
+    except (TypeError, ValueError):
+        return MediaPlayerState.ON
+
+
+def transport_string_to_ha_state(transport) -> MediaPlayerState:
+    """Map a Naim transport string to a Home Assistant state (IDLE if unknown)."""
+    try:
+        return TRANSPORT_STRING_TO_HA_STATE.get(transport, MediaPlayerState.IDLE)
+    except TypeError:
+        return MediaPlayerState.IDLE
+
+
+@dataclass
 class MediaInfo:
-    """Handle media information."""
+    """Currently playing media metadata."""
 
-    def __init__(self) -> None:
-        """Initialize media information."""
-        self.title = None
-        self.artist = None
-        self.album = None
-        self.duration = None
-        self.image_url = None
-        self.position = None
-        self.position_updated_at = None
-
-    def reset(self) -> None:
-        """Reset all media fields."""
-        self.title = None
-        self.artist = None
-        self.album = None
-        self.duration = None
-        self.image_url = None
-        self.position = None
-        self.position_updated_at = None
-
-
-class NaimTransportState(IntEnum):
-    """Enum for transport states from the HTTP API."""
-
-    STOPPED = 1
-    PLAYING = 2
-    PAUSED = 3
-
-
-class TransportStateString(str, Enum):
-    """Enum for transport states from WebSocket messages."""
-
-    PLAYING = "playing"
-    PAUSED = "paused"
-    STOPPED = "stopped"
-
-
-TRANSPORT_STATES_STRING_LOOKUP = {
-    TransportStateString.PLAYING: MediaPlayerState.PLAYING,
-    TransportStateString.PAUSED: MediaPlayerState.PAUSED,
-    TransportStateString.STOPPED: MediaPlayerState.IDLE,
-}
-
-NAIM_TRANSPORT_STATE_TO_HA_STATE = {
-    NaimTransportState.PLAYING: MediaPlayerState.PLAYING,
-    NaimTransportState.PAUSED: MediaPlayerState.PAUSED,
-    NaimTransportState.STOPPED: MediaPlayerState.IDLE,
-}
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    duration: int | float | None = None
+    image_url: str | None = None
+    position: int | float | None = None
+    position_updated_at: datetime | None = None
 
 
 class NaimPlayerState:
@@ -150,38 +140,3 @@ class NaimPlayerState:
         if self.playing_state == MediaPlayerState.IDLE:
             return self.power_state
         return self.playing_state
-
-    @property
-    def media_title(self) -> str | None:
-        """Get media title."""
-        return self.media_info.title
-
-    @property
-    def media_artist(self) -> str | None:
-        """Get media artist."""
-        return self.media_info.artist
-
-    @property
-    def media_album(self) -> str | None:
-        """Get media album."""
-        return self.media_info.album
-
-    @property
-    def media_duration(self) -> int | float | None:
-        """Get media duration."""
-        return self.media_info.duration
-
-    @property
-    def media_position(self) -> int | float | None:
-        """Get media position."""
-        return self.media_info.position
-
-    @property
-    def media_image_url(self) -> str | None:
-        """Get media image URL."""
-        return self.media_info.image_url
-
-    @property
-    def media_position_updated_at(self) -> datetime | None:
-        """Get the UTC timestamp of the last position update, for progress bar interpolation."""
-        return self.media_info.position_updated_at

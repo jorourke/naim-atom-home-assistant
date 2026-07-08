@@ -43,6 +43,17 @@ _LOGGER = logging.getLogger(__name__)
 # fractional input server-side.
 VOLUME_STEP_SELECTOR = NumberSelector(NumberSelectorConfig(min=1, max=20, step=1, mode=NumberSelectorMode.BOX))
 
+# Note: IP validation is done manually after form submission because custom
+# validator functions cannot be serialized for the frontend.
+USER_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_IP_ADDRESS, default=DEFAULT_IP): str,
+        vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
+        vol.Optional("entity_id", default=DEFAULT_ENTITY_ID): str,
+        vol.Required(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(VOLUME_STEP_SELECTOR, vol.Coerce(int)),
+    }
+)
+
 
 def _get_volume_step(config_entry: config_entries.ConfigEntry) -> int:
     """Return the configured volume step, preferring options over data."""
@@ -147,104 +158,37 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Get the options flow for this handler."""
         return NaimOptionsFlow(config_entry)
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> "FlowResult":
-        """Handle the initial step with voluptuous validation."""
-        errors: dict[str, str] = {}
-        # Set up default/suggested values
-        suggested_values = {
-            CONF_IP_ADDRESS: DEFAULT_IP,
-            CONF_NAME: DEFAULT_NAME,
-            "entity_id": DEFAULT_ENTITY_ID,
-            CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
-        }
-
-        # Create the voluptuous schema.
-        # Note: IP validation is done manually after form submission because
-        # custom validator functions cannot be serialized for the frontend.
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_IP_ADDRESS, default=suggested_values[CONF_IP_ADDRESS]): str,
-                vol.Optional(CONF_NAME, default=suggested_values[CONF_NAME]): str,
-                vol.Optional("entity_id", default=suggested_values["entity_id"]): str,
-                vol.Required(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(
-                    VOLUME_STEP_SELECTOR, vol.Coerce(int)
-                ),
-            }
+    def _show_user_form(self, errors: dict[str, str]) -> "FlowResult":
+        """Render the user step form."""
+        return self.async_show_form(
+            step_id="user",
+            data_schema=USER_SCHEMA,
+            errors=errors,
+            description_placeholders={"default_ip": DEFAULT_IP, "default_name": DEFAULT_NAME},
         )
 
-        # If no input is provided, show the form.
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> "FlowResult":
+        """Handle the initial step with voluptuous validation."""
         if user_input is None:
-            return self.async_show_form(
-                step_id="user",
-                data_schema=schema,
-                errors=errors,
-                description_placeholders={
-                    "default_ip": suggested_values[CONF_IP_ADDRESS],
-                    "default_name": suggested_values[CONF_NAME],
-                },
-            )
+            return self._show_user_form({})
 
-        # Validate the input using the schema.
         try:
-            validated_input = schema(user_input)
+            validated_input = USER_SCHEMA(user_input)
         except vol.Invalid as exc:
-            errors["base"] = str(exc)
-            # Merge current inputs into suggested values so the form is prefilled.
-            suggested_values.update(user_input)
-            return self.async_show_form(
-                step_id="user",
-                data_schema=schema,
-                errors=errors,
-                description_placeholders={
-                    "default_ip": suggested_values[CONF_IP_ADDRESS],
-                    "default_name": suggested_values[CONF_NAME],
-                },
-            )
+            return self._show_user_form({"base": str(exc)})
 
-        # Validate IP address manually (can't use custom validator in schema for UI serialization)
-        if not valid_ip_address(validated_input[CONF_IP_ADDRESS]):
-            errors[CONF_IP_ADDRESS] = "invalid_ip_address"
-            suggested_values.update(user_input)
-            return self.async_show_form(
-                step_id="user",
-                data_schema=schema,
-                errors=errors,
-                description_placeholders={
-                    "default_ip": suggested_values[CONF_IP_ADDRESS],
-                    "default_name": suggested_values[CONF_NAME],
-                },
-            )
+        ip = validated_input[CONF_IP_ADDRESS]
+        if not valid_ip_address(ip):
+            return self._show_user_form({CONF_IP_ADDRESS: "invalid_ip_address"})
 
-        # Test connection to the device.
         try:
-            await self._test_connection(validated_input[CONF_IP_ADDRESS])
+            await self._test_connection(ip)
         except ConfigEntryNotReady as err:
             _LOGGER.error("Error connecting to device: %s", err)
-            errors["base"] = "cannot_connect"
-            return self.async_show_form(
-                step_id="user",
-                data_schema=schema,
-                errors=errors,
-                description_placeholders={
-                    "default_ip": suggested_values[CONF_IP_ADDRESS],
-                    "default_name": suggested_values[CONF_NAME],
-                },
-            )
+            return self._show_user_form({"base": "cannot_connect"})
         except Exception as err:
             _LOGGER.exception("Unexpected exception: %s", err)
-            errors["base"] = "unknown"
-            return self.async_show_form(
-                step_id="user",
-                data_schema=schema,
-                errors=errors,
-                description_placeholders={
-                    "default_ip": suggested_values[CONF_IP_ADDRESS],
-                    "default_name": suggested_values[CONF_NAME],
-                },
-            )
-
-        # At this point, the IP is valid and the device is reachable.
-        ip = validated_input[CONF_IP_ADDRESS]
+            return self._show_user_form({"base": "unknown"})
 
         # A device re-added after the serial-based unique_id migration must
         # still be recognized as already configured: an existing entry keyed
