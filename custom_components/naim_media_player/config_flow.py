@@ -117,7 +117,9 @@ async def async_get_device_serial(hass, ip_address: str, port: int = DEFAULT_HTT
     if data is None:
         return None
 
-    serial = data.get("serial")
+    # Naim firmware exposes the device serial as "hardwareSerial"; older
+    # assumptions used a bare "serial" key, kept as a fallback.
+    serial = data.get("hardwareSerial") or data.get("serial")
     return str(serial) if serial else None
 
 

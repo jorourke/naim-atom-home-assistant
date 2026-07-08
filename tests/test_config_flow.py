@@ -302,7 +302,36 @@ async def test_fetch_device_json_returns_none_on_http_error(hass: HomeAssistant)
 
 
 async def test_async_get_device_serial_success(hass: HomeAssistant) -> None:
-    """Test fetching the device serial from the /system endpoint."""
+    """Test fetching the device serial from the /system endpoint.
+
+    Real Naim firmware (Atom, fw 3.12) exposes the serial as "hardwareSerial";
+    there is no bare "serial" key. Payload mirrors an actual device response.
+    """
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(
+        return_value={
+            "name": "system",
+            "chromecastSerial": "386EAFB080E8E8B7",
+            "hardwareSerial": "521103",
+            "hardwareType": "stream800",
+        }
+    )
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        result = await async_get_device_serial(hass, "192.168.1.100")
+
+    assert result == "521103"
+
+
+async def test_async_get_device_serial_legacy_serial_key(hass: HomeAssistant) -> None:
+    """Test falling back to a bare "serial" key if hardwareSerial is absent."""
     mock_response = AsyncMock()
     mock_response.status = 200
     mock_response.json = AsyncMock(return_value={"serial": "ABC123"})
