@@ -421,16 +421,21 @@ def format_duration(seconds: float) -> str:
     return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
 
 
+def log(message: str) -> None:
+    """Print a message prefixed with a local-timezone ISO 8601 timestamp."""
+    print(f"{datetime.now().astimezone().isoformat(timespec='seconds')} {message}")
+
+
 def run_step(index: int, total: int, name: str, action) -> None:
     """Run one step, print its status line, and re-raise on failure."""
     try:
         detail = action()
     except HAStageError as error:
-        print(f"[{index}/{total}] {name:<12} ✗ {error}")
+        log(f"[{index}/{total}] {name:<12} ✗ {error}")
         if error.details:
             print(f"\n{error.details}")
         raise
-    print(f"[{index}/{total}] {name:<12} ✓ {detail}")
+    log(f"[{index}/{total}] {name:<12} ✓ {detail}")
 
 
 def restart_step(config: StageConfig) -> str:
@@ -498,7 +503,8 @@ def command_deploy(args: argparse.Namespace) -> int:
     ensure_config_mount(config)
     version = read_manifest_version(config.source_dir)
     commit = git_commit(config.repo_root)
-    print(f"deploy {DOMAIN} {version} ({commit}) → {config.hass_server}\n")
+    log(f"deploy {DOMAIN} {version} ({commit}) → {config.hass_server}")
+    print()
     start = time.monotonic()
     manifest: BackupManifest | None = None
 
@@ -522,12 +528,14 @@ def command_deploy(args: argparse.Namespace) -> int:
         run_step(5, 6, "wait for ha", lambda: wait_step(config))
         run_step(6, 6, "smoke test", lambda: run_smoke_checks(config, entity_id=args.entity_id).detail)
     except HAStageError:
+        print()
         if manifest is None:
-            print("\naborted — nothing deployed")
+            log("aborted — nothing deployed")
         else:
-            print("\nroll back with: " f"uv run python scripts/ha_stage.py rollback --backup-id {manifest.backup_id}")
+            log(f"roll back with: uv run python scripts/ha_stage.py rollback --backup-id {manifest.backup_id}")
         return 1
-    print(f"\ndone in {format_duration(time.monotonic() - start)}")
+    print()
+    log(f"done in {format_duration(time.monotonic() - start)}")
     return 0
 
 
@@ -540,7 +548,8 @@ def command_rollback(args: argparse.Namespace) -> int:
         if args.backup_id
         else load_latest_backup(config.backup_root)
     )
-    print(f"rollback {DOMAIN} → {manifest.backup_id}\n")
+    log(f"rollback {DOMAIN} → {manifest.backup_id}")
+    print()
     start = time.monotonic()
 
     def restore_step() -> str:
@@ -554,7 +563,8 @@ def command_rollback(args: argparse.Namespace) -> int:
         run_step(4, 4, "smoke test", lambda: run_smoke_checks(config, entity_id=args.entity_id).detail)
     except HAStageError:
         return 1
-    print(f"\ndone in {format_duration(time.monotonic() - start)}")
+    print()
+    log(f"done in {format_duration(time.monotonic() - start)}")
     return 0
 
 

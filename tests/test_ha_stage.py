@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -26,6 +27,7 @@ from scripts.ha_stage import (
     restore_backup,
     run_local_checks,
     run_smoke_checks,
+    run_step,
     wait_for_ha,
     wait_for_ha_down,
 )
@@ -374,6 +376,17 @@ def test_restart_home_assistant_raises_on_auth_failure():
                 restart_home_assistant("http://ha.local:8123", "token")
     finally:
         error.close()
+
+
+def test_run_step_prefixes_lines_with_local_iso_timestamp(capsys: pytest.CaptureFixture):
+    """Step output lines carry a local-timezone ISO 8601 timestamp prefix."""
+    run_step(1, 6, "local checks", lambda: "ok")
+
+    line = capsys.readouterr().out.strip()
+    assert re.match(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2} \[1/6\] local checks ✓ ok$",
+        line,
+    )
 
 
 def test_wait_for_ha_down_detects_api_stop():
