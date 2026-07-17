@@ -9,7 +9,7 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, Platform
+from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 
@@ -26,8 +26,6 @@ from .const import (
     DOMAIN,
 )
 from .state import NaimPlayerState
-
-PLATFORMS = [Platform.MEDIA_PLAYER]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +54,19 @@ async def async_setup_entry(
 
 class NaimPlayer(MediaPlayerEntity):
     """Thin Home Assistant entity adapter for Naim devices."""
+
+    _attr_supported_features = (
+        MediaPlayerEntityFeature.PAUSE
+        | MediaPlayerEntityFeature.VOLUME_SET
+        | MediaPlayerEntityFeature.VOLUME_MUTE
+        | MediaPlayerEntityFeature.TURN_ON
+        | MediaPlayerEntityFeature.TURN_OFF
+        | MediaPlayerEntityFeature.PLAY
+        | MediaPlayerEntityFeature.STOP
+        | MediaPlayerEntityFeature.SELECT_SOURCE
+        | MediaPlayerEntityFeature.NEXT_TRACK
+        | MediaPlayerEntityFeature.PREVIOUS_TRACK
+    )
 
     DEFAULT_SOURCE_MAP = {
         "Analog 1": "ana1",
@@ -90,7 +101,7 @@ class NaimPlayer(MediaPlayerEntity):
         """
         _LOGGER.info("Initializing Naim media player: %s at %s", name, ip_address)
         self._hass = hass
-        self._name = name
+        self._attr_name = name
         self._ip_address = ip_address
         self._volume_step = volume_step / 100
 
@@ -147,27 +158,6 @@ class NaimPlayer(MediaPlayerEntity):
         return bool(self._state.available or self._client.connected)
 
     @property
-    def supported_features(self) -> int:
-        """Flag media player features that are supported."""
-        return (
-            MediaPlayerEntityFeature.PAUSE
-            | MediaPlayerEntityFeature.VOLUME_SET
-            | MediaPlayerEntityFeature.VOLUME_MUTE
-            | MediaPlayerEntityFeature.TURN_ON
-            | MediaPlayerEntityFeature.TURN_OFF
-            | MediaPlayerEntityFeature.PLAY
-            | MediaPlayerEntityFeature.STOP
-            | MediaPlayerEntityFeature.SELECT_SOURCE
-            | MediaPlayerEntityFeature.NEXT_TRACK
-            | MediaPlayerEntityFeature.PREVIOUS_TRACK
-        )
-
-    @property
-    def name(self) -> str:
-        """Return the player name."""
-        return self._name
-
-    @property
     def state(self) -> MediaPlayerState | None:
         """Return the current state."""
         return self._state.state
@@ -195,37 +185,37 @@ class NaimPlayer(MediaPlayerEntity):
     @property
     def media_title(self) -> str | None:
         """Return media title."""
-        return self._state.media_title
+        return self._state.media_info.title
 
     @property
     def media_artist(self) -> str | None:
         """Return media artist."""
-        return self._state.media_artist
+        return self._state.media_info.artist
 
     @property
     def media_album_name(self) -> str | None:
         """Return media album."""
-        return self._state.media_album
+        return self._state.media_info.album
 
     @property
     def media_duration(self) -> int | float | None:
         """Return media duration."""
-        return self._state.media_duration
+        return self._state.media_info.duration
 
     @property
     def media_position(self) -> int | float | None:
         """Return media position."""
-        return self._state.media_position
+        return self._state.media_info.position
 
     @property
     def media_position_updated_at(self) -> datetime | None:
         """Return when the position was last updated, so HA can interpolate the progress bar."""
-        return self._state.media_position_updated_at
+        return self._state.media_info.position_updated_at
 
     @property
     def media_image_url(self) -> str | None:
         """Return media image URL."""
-        return self._state.media_image_url
+        return self._state.media_info.image_url
 
     async def async_update(self) -> None:
         """Poll current device state."""
@@ -244,19 +234,20 @@ class NaimPlayer(MediaPlayerEntity):
         volume = max(0.0, min(1.0, volume))
         await self._client.set_volume(int(round(volume * 100)))
 
-    async def async_volume_up(self) -> None:
-        """Increase volume by one configured step."""
+    async def _async_step_volume(self, direction: int) -> None:
+        """Change volume by one configured step in the given direction (+1/-1)."""
         current_percent = int(round(self._state.volume * 100))
         step_percent = int(round(self._volume_step * 100))
-        target_percent = min(100, current_percent + step_percent)
+        target_percent = max(0, min(100, current_percent + direction * step_percent))
         await self._client.set_volume(target_percent)
+
+    async def async_volume_up(self) -> None:
+        """Increase volume by one configured step."""
+        await self._async_step_volume(1)
 
     async def async_volume_down(self) -> None:
         """Decrease volume by one configured step."""
-        current_percent = int(round(self._state.volume * 100))
-        step_percent = int(round(self._volume_step * 100))
-        target_percent = max(0, current_percent - step_percent)
-        await self._client.set_volume(target_percent)
+        await self._async_step_volume(-1)
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute or unmute volume."""

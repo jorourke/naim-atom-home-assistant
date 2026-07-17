@@ -13,13 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .exceptions import NaimConnectionError
-from .state import (
-    NAIM_TRANSPORT_STATE_TO_HA_STATE,
-    TRANSPORT_STATES_STRING_LOOKUP,
-    NaimPlayerState,
-    NaimTransportState,
-    TransportStateString,
-)
+from .state import NaimPlayerState, transport_int_to_ha_state, transport_string_to_ha_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,24 +54,17 @@ class NaimClient:
         """Return whether the WebSocket connection is currently live."""
         return self._connected
 
-    async def get_value(self, endpoint: str, variable: str) -> Any:
-        """Get a value from an API endpoint with retries."""
-        data = await self._get_json(endpoint)
-        return data.get(variable)
-
-    async def set_value(self, endpoint: str, params: dict[str, str | int | bool]) -> bool:
+    async def set_value(self, endpoint: str, params: dict[str, str | int | bool]) -> None:
         """Set values through an API endpoint with retries."""
         await self._request("put", endpoint, params=params)
-        return True
 
-    async def send_command(self, endpoint: str, cmd: str, **params) -> bool:
+    async def send_command(self, endpoint: str, cmd: str, **params) -> None:
         """Send a command to the device with retries."""
         await self._request("get", endpoint, params={"cmd": cmd, **params})
-        return True
 
-    async def select_input(self, input_id: str) -> bool:
+    async def select_input(self, input_id: str) -> None:
         """Select an input source."""
-        return await self.send_command(f"inputs/{input_id}", "select")
+        await self.send_command(f"inputs/{input_id}", "select")
 
     async def set_volume(self, volume: int) -> None:
         """Set device volume as an integer percentage."""
@@ -128,8 +115,7 @@ class NaimClient:
         nowplaying = nowplaying or {}
         levels = levels or {}
 
-        transport = nowplaying.get("transportState")
-        playing_state = self._transport_state_to_ha(transport)
+        playing_state = transport_int_to_ha_state(nowplaying.get("transportState"))
         updates: dict[str, Any] = {
             "power_state": MediaPlayerState.ON,
             "playing_state": playing_state,
@@ -235,7 +221,7 @@ class NaimClient:
 
         playing_state = state_data.get("state")
         if playing_state:
-            updates["playing_state"] = self._transport_string_to_ha(playing_state)
+            updates["playing_state"] = transport_string_to_ha_state(playing_state)
 
         duration_ms = state_data.get("status", {}).get("duration")
         if duration_ms is not None:
@@ -348,6 +334,10 @@ class NaimClient:
 
     def _extract_source(self, live_status: dict[str, Any]) -> str | None:
         """Extract source name from WebSocket status data."""
+        context = live_status.get("contextPath")
+        if isinstance(context, str) and context.startswith("spotify"):
+            return "Spotify"
+
         media_roles = live_status.get("mediaRoles", {})
         if media_roles:
             meta = media_roles.get("mediaData", {}).get("metaData", {})
@@ -356,21 +346,4 @@ class NaimClient:
             if media_roles.get("title"):
                 return media_roles["title"]
 
-        context = live_status.get("contextPath")
-        if isinstance(context, str) and context.startswith("spotify"):
-            return "Spotify"
         return None
-
-    def _transport_state_to_ha(self, transport: Any) -> MediaPlayerState:
-        """Map a Naim transport integer to Home Assistant state."""
-        try:
-            return NAIM_TRANSPORT_STATE_TO_HA_STATE[NaimTransportState(int(transport))]
-        except (TypeError, ValueError, KeyError):
-            return MediaPlayerState.ON
-
-    def _transport_string_to_ha(self, transport: str) -> MediaPlayerState:
-        """Map a Naim transport string to Home Assistant state."""
-        try:
-            return TRANSPORT_STATES_STRING_LOOKUP[TransportStateString(transport)]
-        except ValueError:
-            return MediaPlayerState.IDLE

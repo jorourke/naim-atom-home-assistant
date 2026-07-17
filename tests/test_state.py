@@ -10,12 +10,10 @@ from homeassistant.util import dt as dt_util
 from custom_components.naim_media_player.state import (
     DEBOUNCED_FIELDS,
     MEDIA_INFO_FIELDS,
-    NAIM_TRANSPORT_STATE_TO_HA_STATE,
-    TRANSPORT_STATES_STRING_LOOKUP,
     MediaInfo,
     NaimPlayerState,
-    NaimTransportState,
-    TransportStateString,
+    transport_int_to_ha_state,
+    transport_string_to_ha_state,
 )
 
 # --- MediaInfo tests ---
@@ -51,72 +49,35 @@ class TestMediaInfo:
         assert info.image_url == "http://example.com/art.jpg"
         assert info.position == 42
 
-    def test_reset(self):
-        """reset() should set all fields back to None."""
-        info = MediaInfo()
-        info.title = "Song"
-        info.artist = "Artist"
-        info.album = "Album"
-        info.duration = 100
-        info.image_url = "http://img"
-        info.position = 50
 
-        info.reset()
-
-        assert info.title is None
-        assert info.artist is None
-        assert info.album is None
-        assert info.duration is None
-        assert info.image_url is None
-        assert info.position is None
+# --- Transport mapping tests ---
 
 
-# --- Enum tests ---
+class TestTransportMappings:
+    """Tests for the transport-state mapping helpers."""
 
+    def test_transport_int_to_ha_state(self):
+        assert transport_int_to_ha_state(1) == MediaPlayerState.IDLE
+        assert transport_int_to_ha_state(2) == MediaPlayerState.PLAYING
+        assert transport_int_to_ha_state(3) == MediaPlayerState.PAUSED
 
-class TestNaimTransportState:
-    """Tests for NaimTransportState IntEnum."""
+    def test_transport_int_accepts_strings(self):
+        """The HTTP API may report the integer as a string."""
+        assert transport_int_to_ha_state("2") == MediaPlayerState.PLAYING
 
-    def test_values(self):
-        assert NaimTransportState.STOPPED == 1
-        assert NaimTransportState.PLAYING == 2
-        assert NaimTransportState.PAUSED == 3
+    def test_transport_int_unknown_maps_to_on(self):
+        assert transport_int_to_ha_state(None) == MediaPlayerState.ON
+        assert transport_int_to_ha_state(99) == MediaPlayerState.ON
+        assert transport_int_to_ha_state("garbage") == MediaPlayerState.ON
 
-    def test_is_int(self):
-        """Should behave as an int for API compatibility."""
-        assert isinstance(NaimTransportState.PLAYING, int)
-        assert NaimTransportState.PLAYING + 0 == 2
+    def test_transport_string_to_ha_state(self):
+        assert transport_string_to_ha_state("playing") == MediaPlayerState.PLAYING
+        assert transport_string_to_ha_state("paused") == MediaPlayerState.PAUSED
+        assert transport_string_to_ha_state("stopped") == MediaPlayerState.IDLE
 
-
-class TestTransportStateString:
-    """Tests for TransportStateString str enum."""
-
-    def test_values(self):
-        assert TransportStateString.PLAYING == "playing"
-        assert TransportStateString.PAUSED == "paused"
-        assert TransportStateString.STOPPED == "stopped"
-
-    def test_is_str(self):
-        """Should behave as a string for WebSocket message comparison."""
-        assert isinstance(TransportStateString.PLAYING, str)
-        assert TransportStateString.PLAYING == "playing"
-
-
-# --- Lookup table tests ---
-
-
-class TestLookupTables:
-    """Tests for state mapping dictionaries."""
-
-    def test_transport_states_string_lookup(self):
-        assert TRANSPORT_STATES_STRING_LOOKUP[TransportStateString.PLAYING] == MediaPlayerState.PLAYING
-        assert TRANSPORT_STATES_STRING_LOOKUP[TransportStateString.PAUSED] == MediaPlayerState.PAUSED
-        assert TRANSPORT_STATES_STRING_LOOKUP[TransportStateString.STOPPED] == MediaPlayerState.IDLE
-
-    def test_naim_transport_state_to_ha_state(self):
-        assert NAIM_TRANSPORT_STATE_TO_HA_STATE[NaimTransportState.PLAYING] == MediaPlayerState.PLAYING
-        assert NAIM_TRANSPORT_STATE_TO_HA_STATE[NaimTransportState.PAUSED] == MediaPlayerState.PAUSED
-        assert NAIM_TRANSPORT_STATE_TO_HA_STATE[NaimTransportState.STOPPED] == MediaPlayerState.IDLE
+    def test_transport_string_unknown_maps_to_idle(self):
+        assert transport_string_to_ha_state("buffering") == MediaPlayerState.IDLE
+        assert transport_string_to_ha_state({"not": "hashable"}) == MediaPlayerState.IDLE
 
 
 # --- Constants tests ---
@@ -189,12 +150,12 @@ class TestNaimPlayerStateBasic:
         state.media_info.position = 30
         state.media_info.image_url = "http://example.com/art.jpg"
 
-        assert state.media_title == "My Song"
-        assert state.media_artist == "My Artist"
-        assert state.media_album == "My Album"
-        assert state.media_duration == 240
-        assert state.media_position == 30
-        assert state.media_image_url == "http://example.com/art.jpg"
+        assert state.media_info.title == "My Song"
+        assert state.media_info.artist == "My Artist"
+        assert state.media_info.album == "My Album"
+        assert state.media_info.duration == 240
+        assert state.media_info.position == 30
+        assert state.media_info.image_url == "http://example.com/art.jpg"
 
 
 # --- NaimPlayerState.update() tests ---
@@ -553,7 +514,7 @@ class TestThreadSafety:
             for _ in range(50):
                 _ = state.state
                 _ = state.volume
-                _ = state.media_title
+                _ = state.media_info.title
 
         await asyncio.gather(update_loop(), read_loop())
         # If we got here without error, the test passes
@@ -568,7 +529,7 @@ class TestMediaPositionUpdatedAt:
     async def test_none_before_any_position_update(self):
         """No timestamp should be recorded until a position is set."""
         state = NaimPlayerState()
-        assert state.media_position_updated_at is None
+        assert state.media_info.position_updated_at is None
 
     async def test_position_update_records_utc_timestamp(self):
         """Setting position should record a UTC timestamp via dt_util.utcnow()."""
@@ -577,18 +538,18 @@ class TestMediaPositionUpdatedAt:
         await state.update(source="poll", position=42)
         after = dt_util.utcnow()
 
-        assert state.media_position_updated_at is not None
-        assert before <= state.media_position_updated_at <= after
+        assert state.media_info.position_updated_at is not None
+        assert before <= state.media_info.position_updated_at <= after
 
     async def test_position_timestamp_refreshes_when_position_changes(self):
         """The timestamp should update whenever position genuinely changes, poll or websocket."""
         state = NaimPlayerState()
         await state.update(source="poll", position=10)
-        first_timestamp = state.media_position_updated_at
+        first_timestamp = state.media_info.position_updated_at
 
         await asyncio.sleep(0.01)
         await state.update(source="websocket", position=15)
-        second_timestamp = state.media_position_updated_at
+        second_timestamp = state.media_info.position_updated_at
 
         assert second_timestamp > first_timestamp
 
@@ -596,30 +557,30 @@ class TestMediaPositionUpdatedAt:
         """Updates that don't touch position should not create a timestamp."""
         state = NaimPlayerState()
         await state.update(source="poll", title="Song")
-        assert state.media_position_updated_at is None
+        assert state.media_info.position_updated_at is None
 
     async def test_unchanged_position_does_not_refresh_timestamp(self):
         """Repeating the same position value must not rewrite the interpolation baseline."""
         state = NaimPlayerState()
         await state.update(source="poll", position=10)
-        first_timestamp = state.media_position_updated_at
+        first_timestamp = state.media_info.position_updated_at
 
         await asyncio.sleep(0.01)
         await state.update(source="poll", position=10)
 
-        assert state.media_position_updated_at == first_timestamp
+        assert state.media_info.position_updated_at == first_timestamp
 
     async def test_none_position_does_not_set_or_refresh_timestamp(self):
         """A None position (e.g. no track playing) must not create or refresh the timestamp."""
         state = NaimPlayerState()
         await state.update(source="poll", position=None)
-        assert state.media_position_updated_at is None
+        assert state.media_info.position_updated_at is None
 
         await state.update(source="poll", position=10)
-        first_timestamp = state.media_position_updated_at
+        first_timestamp = state.media_info.position_updated_at
 
         await asyncio.sleep(0.01)
         await state.update(source="poll", position=None)
 
-        assert state.media_position_updated_at == first_timestamp
+        assert state.media_info.position_updated_at == first_timestamp
         assert state.media_info.position is None

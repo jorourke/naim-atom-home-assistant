@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,10 @@ VALID_MEDIA_STATES = {"off", "on", "idle", "playing", "paused", "standby", "unav
 
 class HAStageError(RuntimeError):
     """Raised when stage deployment cannot proceed."""
+
+    def __init__(self, message: str, details: str | None = None):
+        super().__init__(message)
+        self.details = details
 
 
 @dataclass(frozen=True)
@@ -209,6 +214,7 @@ class SmokeResult:
     entity_id: str
     state: str
     log_check: str
+    detail: str
 
 
 def build_config(
@@ -259,24 +265,58 @@ def ha_api_get(hass_server: str, hass_token: str, path: str, timeout: float = 10
 
 
 def wait_for_ha(hass_server: str, hass_token: str, timeout: float = 180, interval: float = 3) -> None:
-    """Wait until Home Assistant API responds."""
+    """Wait until Home Assistant is fully started (API up and core state RUNNING).
+
+    The API answers before integrations finish loading, so a plain
+    connectivity check would let smoke tests run before entities exist.
+    """
     deadline = time.monotonic() + timeout
     while True:
         try:
-            ha_api_get(hass_server, hass_token, "/api/")
-            return
-        except HAStageError as error:
-            if time.monotonic() >= deadline:
-                raise HAStageError(f"Home Assistant API did not recover within {timeout:.0f}s") from error
-            time.sleep(interval)
+            config = ha_api_get(hass_server, hass_token, "/api/config")
+            core_state = config.get("state")
+            if core_state == "RUNNING":
+                return
+            error: Exception = HAStageError(f"Home Assistant core state is {core_state}")
+        except HAStageError as api_error:
+            error = api_error
+        if time.monotonic() >= deadline:
+            raise HAStageError(f"Home Assistant did not recover within {timeout:.0f}s") from error
+        time.sleep(interval)
 
 
-def restart_home_assistant() -> None:
-    """Restart Home Assistant through hass-cli."""
-    subprocess.run(
-        ["hass-cli", "raw", "post", "/api/services/homeassistant/restart"],
-        check=True,
+def wait_for_ha_down(hass_server: str, hass_token: str, timeout: float = 30, interval: float = 3) -> float | None:
+    """Wait for the HA API to stop responding; return seconds elapsed, or None if it never went down."""
+    start = time.monotonic()
+    deadline = start + timeout
+    while time.monotonic() < deadline:
+        try:
+            ha_api_get(hass_server, hass_token, "/api/", timeout=5)
+        except HAStageError:
+            return time.monotonic() - start
+        time.sleep(interval)
+    return None
+
+
+def restart_home_assistant(hass_server: str, hass_token: str) -> None:
+    """Request an HA restart; gateway errors and dropped connections mean the restart began."""
+    url = urljoin(hass_server.rstrip("/") + "/", "api/services/homeassistant/restart")
+    request = Request(
+        url,
+        data=b"{}",
+        method="POST",
+        headers={"Authorization": f"Bearer {hass_token}", "Content-Type": "application/json"},
     )
+    try:
+        with urlopen(request, timeout=15):
+            pass
+    except HTTPError as error:
+        # HTTPError wraps the open response; close it or its GC emits a ResourceWarning.
+        error.close()
+        if error.code not in (502, 503, 504):
+            raise HAStageError(f"Restart request failed: {error}") from error
+    except (URLError, TimeoutError):
+        pass
 
 
 def validate_live_files(config: StageConfig) -> None:
@@ -330,35 +370,88 @@ def run_smoke_checks(config: StageConfig, entity_id: str | None = None) -> Smoke
         raise HAStageError(f"Unexpected media player state for {entity_id}: {state}")
     log_check = query_loki_for_errors()
     attributes = entity.get("attributes") or {}
-    print(
-        f"Smoke OK: {entity_id} state={state} "
+    detail = (
+        f"{entity_id} state={state} "
         f"source={attributes.get('source')} volume={attributes.get('volume_level')} "
         f"title={attributes.get('media_title')} logs={log_check}"
     )
-    return SmokeResult(entity_id=entity_id, state=state, log_check=log_check)
+    return SmokeResult(entity_id=entity_id, state=state, log_check=log_check, detail=detail)
 
 
-def run_local_checks(config: StageConfig) -> None:
-    """Run local verification before deployment."""
-    commands = [
-        ["uv", "run", "ruff", "check", "custom_components/", "tests/"],
-        ["uv", "run", "ruff", "format", "--check", "custom_components/", "tests/"],
-        ["uv", "run", "pytest", "tests/", "-q"],
-        [
-            "uv",
-            "run",
-            "python",
-            "-c",
-            (
-                "from custom_components.naim_media_player.media_player import NaimPlayer; "
-                "from custom_components.naim_media_player.client import NaimClient; "
-                "from custom_components.naim_media_player.state import NaimPlayerState; "
-                "print('All imports OK')"
-            ),
-        ],
+def run_local_checks(config: StageConfig) -> str:
+    """Run local verification before deployment; command output is surfaced only on failure."""
+    checks = [
+        ("ruff", ["uv", "run", "ruff", "check", "custom_components/", "tests/"]),
+        ("format", ["uv", "run", "ruff", "format", "--check", "custom_components/", "tests/"]),
+        ("pytest", ["uv", "run", "pytest", "tests/", "-q"]),
+        (
+            "imports",
+            [
+                "uv",
+                "run",
+                "python",
+                "-c",
+                (
+                    "from custom_components.naim_media_player.media_player import NaimPlayer; "
+                    "from custom_components.naim_media_player.client import NaimClient; "
+                    "from custom_components.naim_media_player.state import NaimPlayerState; "
+                    "print('All imports OK')"
+                ),
+            ],
+        ),
     ]
-    for command in commands:
-        subprocess.run(command, cwd=config.repo_root, check=True)
+    details = []
+    for name, command in checks:
+        result = subprocess.run(command, cwd=config.repo_root, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise HAStageError(
+                f"{name} failed (exit {result.returncode})",
+                details=(result.stdout + result.stderr).strip(),
+            )
+        if name == "pytest":
+            match = re.search(r"\d+ passed", result.stdout)
+            name = f"pytest ({match.group(0)})" if match else name
+        details.append(name)
+    return ", ".join(details)
+
+
+def format_duration(seconds: float) -> str:
+    """Format elapsed seconds as '3s' or '1m 18s'."""
+    minutes, secs = divmod(round(seconds), 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
+
+
+def log(message: str) -> None:
+    """Print a message prefixed with a local-timezone ISO 8601 timestamp."""
+    print(f"{datetime.now().astimezone().isoformat(timespec='seconds')} {message}")
+
+
+def run_step(index: int, total: int, name: str, action) -> None:
+    """Run one step, print its status line, and re-raise on failure."""
+    try:
+        detail = action()
+    except HAStageError as error:
+        log(f"[{index}/{total}] {name:<12} ✗ {error}")
+        if error.details:
+            print(f"\n{error.details}")
+        raise
+    log(f"[{index}/{total}] {name:<12} ✓ {detail}")
+
+
+def restart_step(config: StageConfig) -> str:
+    """Request a restart and report whether the API was observed going down."""
+    restart_home_assistant(config.hass_server, config.hass_token)
+    down_after = wait_for_ha_down(config.hass_server, config.hass_token)
+    if down_after is None:
+        return "requested (down not observed)"
+    return f"requested (API went down after {down_after:.0f}s)"
+
+
+def wait_step(config: StageConfig) -> str:
+    """Wait for the API to recover and report how long it took."""
+    start = time.monotonic()
+    wait_for_ha(config.hass_server, config.hass_token)
+    return f"back up after {time.monotonic() - start:.0f}s"
 
 
 def command_status(args: argparse.Namespace) -> int:
@@ -399,7 +492,8 @@ def command_smoke(args: argparse.Namespace) -> int:
     """Run passive smoke checks."""
     config = build_config()
     ensure_config_mount(config)
-    run_smoke_checks(config, entity_id=args.entity_id)
+    result = run_smoke_checks(config, entity_id=args.entity_id)
+    print(f"Smoke OK: {result.detail}")
     return 0
 
 
@@ -407,21 +501,41 @@ def command_deploy(args: argparse.Namespace) -> int:
     """Deploy integration to live HA and smoke test it."""
     config = build_config()
     ensure_config_mount(config)
-    if not args.skip_local_checks:
-        run_local_checks(config)
-    manifest = create_backup(config)
-    print(f"Created rollback backup: {manifest.backup_id}")
-    try:
+    version = read_manifest_version(config.source_dir)
+    commit = git_commit(config.repo_root)
+    log(f"deploy {DOMAIN} {version} ({commit}) → {config.hass_server}")
+    print()
+    start = time.monotonic()
+    manifest: BackupManifest | None = None
+
+    def backup_step() -> str:
+        nonlocal manifest
+        manifest = create_backup(config)
+        return manifest.backup_id
+
+    def copy_step() -> str:
         deploy_files(config)
-    except Exception:
-        print(
-            "Deploy failed after backup. Roll back with: "
-            f"uv run python scripts/ha_stage.py rollback --backup-id {manifest.backup_id}"
-        )
-        raise
-    restart_home_assistant()
-    wait_for_ha(config.hass_server, config.hass_token)
-    run_smoke_checks(config, entity_id=args.entity_id)
+        return str(config.target_dir)
+
+    try:
+        if args.skip_local_checks:
+            run_step(1, 6, "local checks", lambda: "skipped (--skip-local-checks)")
+        else:
+            run_step(1, 6, "local checks", lambda: run_local_checks(config))
+        run_step(2, 6, "backup", backup_step)
+        run_step(3, 6, "copy files", copy_step)
+        run_step(4, 6, "restart", lambda: restart_step(config))
+        run_step(5, 6, "wait for ha", lambda: wait_step(config))
+        run_step(6, 6, "smoke test", lambda: run_smoke_checks(config, entity_id=args.entity_id).detail)
+    except HAStageError:
+        print()
+        if manifest is None:
+            log("aborted — nothing deployed")
+        else:
+            log(f"roll back with: uv run python scripts/ha_stage.py rollback --backup-id {manifest.backup_id}")
+        return 1
+    print()
+    log(f"done in {format_duration(time.monotonic() - start)}")
     return 0
 
 
@@ -434,11 +548,23 @@ def command_rollback(args: argparse.Namespace) -> int:
         if args.backup_id
         else load_latest_backup(config.backup_root)
     )
-    restore_backup(config, manifest)
-    print(f"Restored rollback backup: {manifest.backup_id}")
-    restart_home_assistant()
-    wait_for_ha(config.hass_server, config.hass_token)
-    run_smoke_checks(config, entity_id=args.entity_id)
+    log(f"rollback {DOMAIN} → {manifest.backup_id}")
+    print()
+    start = time.monotonic()
+
+    def restore_step() -> str:
+        restore_backup(config, manifest)
+        return manifest.backup_id
+
+    try:
+        run_step(1, 4, "restore", restore_step)
+        run_step(2, 4, "restart", lambda: restart_step(config))
+        run_step(3, 4, "wait for ha", lambda: wait_step(config))
+        run_step(4, 4, "smoke test", lambda: run_smoke_checks(config, entity_id=args.entity_id).detail)
+    except HAStageError:
+        return 1
+    print()
+    log(f"done in {format_duration(time.monotonic() - start)}")
     return 0
 
 
