@@ -585,3 +585,35 @@ async def test_websocket_updates_metadata(hass, state):
     assert state.media_info.position == 45
     assert state.media_info.image_url == "http://example.com/icon.jpg"
     assert state.source == "Spotify"
+
+
+async def test_websocket_source_prefers_spotify_context_over_playlist_title(hass, state):
+    """A Spotify Connect playlist/queue name (mediaRoles.title) must not shadow the actual source.
+
+    Naim's status payload includes mediaRoles.title for the currently-loaded playlist/queue
+    (e.g. "Liked Songs"), separate from contextPath, which identifies the streaming service.
+    Source detection must resolve to "Spotify" here, not the playlist name, otherwise the
+    Home Assistant source dropdown reports a value absent from source_list.
+    """
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    await client._handle_message(
+        """
+        {
+            "data": {
+                "state": "playing",
+                "trackRoles": {
+                    "title": "I'll Fly Away"
+                },
+                "mediaRoles": {
+                    "title": "Liked Songs",
+                    "mediaData": {
+                        "metaData": {}
+                    }
+                },
+                "contextPath": "spotify:user:liked_songs"
+            }
+        }
+        """
+    )
+
+    assert state.source == "Spotify"

@@ -334,6 +334,10 @@ class NaimClient:
 
     def _extract_source(self, live_status: dict[str, Any]) -> str | None:
         """Extract source name from WebSocket status data."""
+        context = live_status.get("contextPath")
+        if isinstance(context, str) and context.startswith("spotify"):
+            return "Spotify"
+
         media_roles = live_status.get("mediaRoles", {})
         if media_roles:
             meta = media_roles.get("mediaData", {}).get("metaData", {})
@@ -342,7 +346,4 @@ class NaimClient:
             if media_roles.get("title"):
                 return media_roles["title"]
 
-        context = live_status.get("contextPath")
-        if isinstance(context, str) and context.startswith("spotify"):
-            return "Spotify"
         return None

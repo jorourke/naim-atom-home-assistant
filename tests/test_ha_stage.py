@@ -1,9 +1,11 @@
 """Tests for the Home Assistant stage deployment CLI."""
 
+import io
 import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -22,8 +24,10 @@ from scripts.ha_stage import (
     redacted_env_status,
     restart_home_assistant,
     restore_backup,
+    run_local_checks,
     run_smoke_checks,
     wait_for_ha,
+    wait_for_ha_down,
 )
 
 
@@ -284,16 +288,22 @@ def test_ha_api_get_sends_bearer_token():
     assert request.headers["Authorization"] == "Bearer secret-token"
 
 
-def test_wait_for_ha_retries_until_api_succeeds():
-    """HA readiness polling tolerates temporary connection failures."""
+def test_wait_for_ha_waits_for_running_core_state():
+    """HA readiness polling waits through API downtime AND the STARTING phase.
+
+    The API answers while integrations are still loading, so a plain
+    connectivity check lets smoke tests run before entities exist.
+    """
+    responses = [HAStageError("not ready"), {"state": "STARTING"}, {"state": "RUNNING"}]
     calls = 0
 
     def fake_get(*args, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 1:
-            raise HAStageError("not ready")
-        return {"message": "ok"}
+        result = responses[calls - 1]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     with (
         patch("scripts.ha_stage.ha_api_get", side_effect=fake_get),
@@ -301,18 +311,131 @@ def test_wait_for_ha_retries_until_api_succeeds():
     ):
         wait_for_ha("http://ha.local:8123", "token", timeout=5, interval=0.01)
 
+    assert calls == 3
+
+
+def test_wait_for_ha_times_out_when_never_running():
+    """Readiness polling fails clearly if HA never reaches RUNNING."""
+    with (
+        patch("scripts.ha_stage.ha_api_get", return_value={"state": "STARTING"}),
+        patch("time.sleep"),
+    ):
+        with pytest.raises(HAStageError, match="did not recover"):
+            wait_for_ha("http://ha.local:8123", "token", timeout=0.05, interval=0.01)
+
+
+def test_restart_home_assistant_posts_to_restart_service():
+    """Restart posts directly to the HA restart service with the bearer token."""
+    response = MagicMock()
+
+    with patch("scripts.ha_stage.urlopen", return_value=response) as mocked_urlopen:
+        restart_home_assistant("http://ha.local:8123", "secret-token")
+
+    request = mocked_urlopen.call_args.args[0]
+    assert request.full_url == "http://ha.local:8123/api/services/homeassistant/restart"
+    assert request.get_method() == "POST"
+    assert request.headers["Authorization"] == "Bearer secret-token"
+
+
+def http_error(code: int, msg: str) -> HTTPError:
+    """Build an HTTPError for mocking urlopen failures.
+
+    An HTTPError wraps an open file object; any test that creates one must
+    ensure it gets closed, or its garbage collection emits a ResourceWarning
+    that pytest reports against whichever test happens to be running.
+    """
+    return HTTPError("http://ha.local:8123", code, msg, {}, io.BytesIO(b""))
+
+
+def test_restart_home_assistant_tolerates_gateway_errors():
+    """Gateway errors mean HA is already restarting, not a failure."""
+    error = http_error(504, "Gateway Timeout")
+
+    with patch("scripts.ha_stage.urlopen", side_effect=error):
+        restart_home_assistant("http://ha.local:8123", "token")
+
+    # restart_home_assistant must close the swallowed error itself.
+    assert error.fp.closed
+
+
+def test_restart_home_assistant_tolerates_dropped_connection():
+    """A connection dropped mid-restart is expected, not a failure."""
+    with patch("scripts.ha_stage.urlopen", side_effect=URLError("connection reset")):
+        restart_home_assistant("http://ha.local:8123", "token")
+
+
+def test_restart_home_assistant_raises_on_auth_failure():
+    """Non-gateway HTTP errors (e.g. bad token) still fail the deploy."""
+    error = http_error(401, "Unauthorized")
+
+    try:
+        with patch("scripts.ha_stage.urlopen", side_effect=error):
+            with pytest.raises(HAStageError, match="Restart request failed"):
+                restart_home_assistant("http://ha.local:8123", "token")
+    finally:
+        error.close()
+
+
+def test_wait_for_ha_down_detects_api_stop():
+    """Down-detection returns elapsed seconds once the API stops responding."""
+    calls = 0
+
+    def fake_get(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls >= 2:
+            raise HAStageError("down")
+        return {"message": "ok"}
+
+    with (
+        patch("scripts.ha_stage.ha_api_get", side_effect=fake_get),
+        patch("time.sleep"),
+    ):
+        elapsed = wait_for_ha_down("http://ha.local:8123", "token", timeout=5, interval=0.01)
+
+    assert elapsed is not None
     assert calls == 2
 
 
-def test_restart_home_assistant_uses_hass_cli():
-    """Restart command delegates to hass-cli."""
-    with patch("subprocess.run") as run:
-        restart_home_assistant()
+def test_wait_for_ha_down_returns_none_when_api_stays_up():
+    """Down-detection gives up quietly if the API never goes down."""
+    with (
+        patch("scripts.ha_stage.ha_api_get", return_value={"message": "ok"}),
+        patch("time.sleep"),
+    ):
+        elapsed = wait_for_ha_down("http://ha.local:8123", "token", timeout=0.05, interval=0.01)
 
-    run.assert_called_once_with(
-        ["hass-cli", "raw", "post", "/api/services/homeassistant/restart"],
-        check=True,
-    )
+    assert elapsed is None
+
+
+def test_run_local_checks_returns_summary_without_output(tmp_path: Path):
+    """Passing local checks summarize to one line, including the pytest count."""
+    config = StageConfig(tmp_path, tmp_path / "config", "http://ha.local:8123", "token")
+
+    def fake_run(command, **kwargs):
+        stdout = "184 passed in 5.73s\n" if "pytest" in command else "ok\n"
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    with patch("subprocess.run", side_effect=fake_run):
+        detail = run_local_checks(config)
+
+    assert detail == "ruff, format, pytest (184 passed), imports"
+
+
+def test_run_local_checks_raises_with_captured_output(tmp_path: Path):
+    """A failing check raises with its captured output attached for display."""
+    config = StageConfig(tmp_path, tmp_path / "config", "http://ha.local:8123", "token")
+
+    def fake_run(command, **kwargs):
+        if "pytest" in command:
+            return subprocess.CompletedProcess(command, 1, stdout="FAILED test_x\n", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=fake_run):
+        with pytest.raises(HAStageError, match="pytest failed") as excinfo:
+            run_local_checks(config)
+
+    assert "FAILED test_x" in excinfo.value.details
 
 
 def test_run_smoke_checks_reports_entity_and_skips_loki(tmp_path: Path):
@@ -346,6 +469,7 @@ def test_run_smoke_checks_reports_entity_and_skips_loki(tmp_path: Path):
         entity_id="media_player.naim_atom",
         state="playing",
         log_check="skipped",
+        detail=("media_player.naim_atom state=playing source=Spotify " "volume=0.2 title=None logs=skipped"),
     )
 
 
