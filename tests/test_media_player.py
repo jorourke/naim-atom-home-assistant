@@ -1,6 +1,7 @@
 """Tests for the Naim Media Player entity."""
 
 import inspect
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.naim_media_player import media_player
 from custom_components.naim_media_player.const import CONF_SERIAL, DOMAIN
 from custom_components.naim_media_player.media_player import NaimPlayer, async_setup_entry
 
@@ -170,6 +172,31 @@ async def test_device_info_registers_device_with_serial(hass):
     assert device_info["identifiers"] == {(DOMAIN, "SERIAL123")}
 
 
+async def test_source_maps_device_input_id_to_configured_name(hass):
+    """The device reports `inputs/<id>`; the entity presents the configured name.
+
+    `source` must be a member of `source_list`, otherwise the frontend dropdown
+    shows a value it cannot select.
+    """
+    player = NaimPlayer(hass, "Test", "192.168.1.100", sources={"HDMI": "hdmi", "Spotify": "spotify"})
+
+    player._state.source = "inputs/hdmi"
+    assert player.source == "HDMI"
+
+    player._state.source = "inputs/spotify"
+    assert player.source == "Spotify"
+
+
+async def test_source_is_none_when_input_unknown_or_unset(hass):
+    """An input outside the configured map has no name to present."""
+    player = NaimPlayer(hass, "Test", "192.168.1.100", sources={"HDMI": "hdmi"})
+
+    assert player.source is None
+
+    player._state.source = "inputs/airplay"
+    assert player.source is None
+
+
 async def test_source_list_configured(hass):
     """Test configured source list."""
     with patch("custom_components.naim_media_player.media_player.NaimClient"):
@@ -186,7 +213,7 @@ async def test_properties_delegate_to_state(mock_player):
     """Test that properties delegate to state."""
     mock_player._state.volume = 0.75
     mock_player._state.muted = True
-    mock_player._state.source = "Spotify"
+    mock_player._state.source = "inputs/spotify"
     mock_player._state.media_info.title = "Test Song"
     mock_player._state.media_info.artist = "Test Artist"
     mock_player._state.media_info.album = "Test Album"
@@ -220,6 +247,16 @@ async def test_async_update_delegates_to_client(mock_player):
     """Test async_update calls client.poll_state."""
     await mock_player.async_update()
     mock_player._client.poll_state.assert_called_once()
+
+
+def test_scan_interval_is_fast_enough_to_catch_externally_triggered_power_on():
+    """power_state is only ever refreshed by polling /power (WebSocket carries no power signal
+    — confirmed by capturing live device traffic, which streams nowplaying heartbeats
+    continuously even while the device reports standby over HTTP). A slow scan interval means
+    a device woken by Spotify Connect (outside HA) can sit at `off` in HA for up to a full
+    interval after it actually started playing.
+    """
+    assert media_player.SCAN_INTERVAL <= timedelta(seconds=5)
 
 
 async def test_turn_on(mock_player):

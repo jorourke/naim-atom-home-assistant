@@ -1,7 +1,7 @@
 """Media player entity for Naim devices."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -28,6 +28,11 @@ from .const import (
 from .state import NaimPlayerState
 
 _LOGGER = logging.getLogger(__name__)
+
+# power_state has no push channel — the WebSocket streams nowplaying heartbeats
+# continuously even while the device is in standby, so polling /power is the only
+# way to detect an externally-triggered power-on (e.g. via Spotify Connect).
+SCAN_INTERVAL = timedelta(seconds=3)
 
 
 async def async_setup_entry(
@@ -122,6 +127,7 @@ class NaimPlayer(MediaPlayerEntity):
         )
         self._source_map = sources if sources else self.DEFAULT_SOURCE_MAP.copy()
         self._source_list = list(self._source_map.keys())
+        self._input_names = {input_id: name for name, input_id in self._source_map.items()}
         self._state = NaimPlayerState(
             on_change=self._write_state_when_registered,
             debounce_timeout=2.0,
@@ -174,8 +180,16 @@ class NaimPlayer(MediaPlayerEntity):
 
     @property
     def source(self) -> str | None:
-        """Return the current source."""
-        return self._state.source
+        """Return the configured name for the device's current input.
+
+        The device reports its input as a path ("inputs/hdmi"); Home Assistant
+        expects a member of `source_list`, so an input outside the configured
+        map has no name to report.
+        """
+        raw = self._state.source
+        if not raw:
+            return None
+        return self._input_names.get(raw.removeprefix("inputs/"))
 
     @property
     def source_list(self) -> list[str]:

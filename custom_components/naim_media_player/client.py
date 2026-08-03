@@ -20,6 +20,14 @@ _LOGGER = logging.getLogger(__name__)
 MAX_BUFFER_SIZE = 65536
 
 
+def _ms_to_seconds(value: Any) -> float | None:
+    """Convert a device millisecond value (number or string) to seconds."""
+    try:
+        return float(value) / 1000
+    except (TypeError, ValueError):
+        return None
+
+
 class NaimClient:
     """Consolidated HTTP API and WebSocket client for Naim devices."""
 
@@ -78,12 +86,17 @@ class NaimClient:
         await self._state.update(source="user", muted=mute)
 
     async def set_power(self, on: bool) -> None:
-        """Set device power state."""
+        """Send a power command, reporting standby immediately but never power-on.
+
+        The device applies standby at once, so writing OFF here is confirmed by the
+        next poll. Waking is not symmetric: it can keep reporting standby for ~20s
+        after being told to power on, so claiming ON published a state the next poll
+        (3s) contradicted, and told anything waiting for the device that it was
+        already up. Power is not a debounced field, so nothing protects such a claim.
+        """
         await self.set_value("power", {"system": "on" if on else "lona"})
-        await self._state.update(
-            source="user",
-            power_state=MediaPlayerState.ON if on else MediaPlayerState.OFF,
-        )
+        if not on:
+            await self._state.update(source="user", power_state=MediaPlayerState.OFF)
 
     async def send_playback_command(self, cmd: str) -> None:
         """Send a playback command."""
@@ -122,8 +135,12 @@ class NaimClient:
             "title": nowplaying.get("title"),
             "artist": nowplaying.get("artistName"),
             "album": nowplaying.get("albumName"),
-            "duration": nowplaying.get("duration"),
-            "position": nowplaying.get("transportPosition"),
+            # The HTTP API reports these as millisecond strings and the WebSocket
+            # reports the same values as millisecond numbers. Both channels must
+            # write seconds, or each poll flips the value and the next WebSocket
+            # message flips it back.
+            "duration": _ms_to_seconds(nowplaying.get("duration")),
+            "position": _ms_to_seconds(nowplaying.get("transportPosition")),
             "image_url": nowplaying.get("artwork"),
         }
 
@@ -133,6 +150,9 @@ class NaimClient:
         if "mute" in levels:
             with contextlib.suppress(TypeError, ValueError):
                 updates["muted"] = bool(int(levels["mute"]))
+        # `source` is the device's canonical input path ("inputs/hdmi"); the entity
+        # maps it to the configured name. The poll is its only writer — a second
+        # writer guessing a name from the WebSocket payload made the two disagree.
         if nowplaying.get("source"):
             updates["source_name"] = nowplaying["source"]
 
@@ -233,10 +253,6 @@ class NaimClient:
             with contextlib.suppress(TypeError, ValueError):
                 updates["position"] = float(position_ms) / 1000
 
-        source = self._extract_source(state_data)
-        if source:
-            updates["source_name"] = source
-
         await self._state.update(source="websocket", **updates)
 
     async def _get_json(self, endpoint: str, single_attempt: bool = False) -> dict[str, Any]:
@@ -331,19 +347,3 @@ class NaimClient:
             message = self._buffer[:idx]
             self._buffer = self._buffer[idx:]
             await self._handle_message(message)
-
-    def _extract_source(self, live_status: dict[str, Any]) -> str | None:
-        """Extract source name from WebSocket status data."""
-        context = live_status.get("contextPath")
-        if isinstance(context, str) and context.startswith("spotify"):
-            return "Spotify"
-
-        media_roles = live_status.get("mediaRoles", {})
-        if media_roles:
-            meta = media_roles.get("mediaData", {}).get("metaData", {})
-            if meta.get("serviceID") == "roon":
-                return "Roon"
-            if media_roles.get("title"):
-                return media_roles["title"]
-
-        return None

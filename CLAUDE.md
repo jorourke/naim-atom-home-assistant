@@ -69,6 +69,24 @@ _debounce_timeout: float = 2.0          # 2 second window; non-"user" updates to
 
 **Why:** When user changes volume via UI → HTTP command → device updates → WebSocket echoes change → UI would flicker. Debounce prevents this.
 
+### Two Channels, One Value (Critical)
+
+The poll and the WebSocket both write into the same `NaimPlayerState`. Wherever both write a
+field they must write the *same* value for the same device condition, or the field flips on
+every poll and the frontend flickers a few times a second:
+
+- **`source`** — the poll owns it, exclusively. It stores the device's canonical input path
+  (`"inputs/hdmi"`) from `/nowplaying`, and `NaimPlayer.source` maps that to the configured
+  name. The WebSocket must not write `source`: deriving a name from `contextPath`/`mediaRoles`
+  produced `"Spotify"` against the poll's `"inputs/spotify"`, and the two fought forever.
+- **`duration` / `position`** — the device reports milliseconds on both channels (strings over
+  HTTP, numbers over the WebSocket). Both paths convert to seconds before writing.
+- **`power_state`** — `set_power` reports standby immediately but never reports power-on. The
+  device applies standby at once, but can keep reporting standby for **~20s** after being told
+  to wake, so claiming `ON` published a value the next poll contradicted (on → off → on) and
+  told consumers waiting for the device that it was already up. Power is not in
+  `DEBOUNCED_FIELDS`, so nothing shields such a claim from the poll.
+
 ### Error Handling Pattern
 `client.py` never optimistically writes state and then reverts it. Each setter sends the HTTP
 command first; `NaimPlayerState.update(...)` (with `source="user"`) only runs after the command

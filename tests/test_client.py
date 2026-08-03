@@ -219,13 +219,30 @@ async def test_set_mute_failed_command_leaves_state_and_debounce_unarmed(hass, s
     assert state.muted is True
 
 
-async def test_set_power_updates_state_and_device(hass, state):
-    """Test set_power sends command and updates power state."""
+async def test_set_power_on_leaves_power_state_to_the_poll(hass, state):
+    """Powering on claims nothing: the device can report standby for ~20s afterwards.
+
+    An optimistic `ON` write is a lie the next poll (3s later) contradicts — consumers
+    saw on → off → on, and anything waiting for the device to come up was told it
+    already had.
+    """
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
     with aioresponses() as mock:
         mock.put("http://192.168.1.100:15081/power?system=on", status=200)
         await client.set_power(True)
-    assert state.power_state == MediaPlayerState.ON
+
+    assert state.power_state == MediaPlayerState.OFF  # unchanged until the device says otherwise
+
+
+async def test_set_power_off_reports_standby_immediately(hass, state):
+    """Standby is applied at once, so reporting it is confirmed rather than contradicted."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    state.power_state = MediaPlayerState.ON
+    with aioresponses() as mock:
+        mock.put("http://192.168.1.100:15081/power?system=lona", status=200)
+        await client.set_power(False)
+
+    assert state.power_state == MediaPlayerState.OFF
 
 
 async def test_poll_state_device_on(hass, state):
@@ -240,10 +257,10 @@ async def test_poll_state_device_on(hass, state):
                 "title": "Test Song",
                 "artistName": "Test Artist",
                 "albumName": "Test Album",
-                "duration": 300,
-                "transportPosition": 120,
+                "duration": "300000",
+                "transportPosition": "120500",
                 "artwork": "http://example.com/art.jpg",
-                "source": "spotify",
+                "source": "inputs/spotify",
             },
         )
         mock.get(
@@ -257,13 +274,45 @@ async def test_poll_state_device_on(hass, state):
     assert state.playing_state == MediaPlayerState.PLAYING
     assert state.volume == 0.75
     assert state.muted is False
-    assert state.source == "spotify"
+    assert state.source == "inputs/spotify"
     assert state.media_info.title == "Test Song"
     assert state.media_info.artist == "Test Artist"
     assert state.media_info.album == "Test Album"
     assert state.media_info.duration == 300
-    assert state.media_info.position == 120
+    assert state.media_info.position == 120.5
     assert state.media_info.image_url == "http://example.com/art.jpg"
+
+
+async def test_poll_and_websocket_agree_on_media_info(hass, state):
+    """The poll and the WebSocket must write identical values for the same track.
+
+    The device reports duration/position as millisecond strings over HTTP and as
+    millisecond numbers over the WebSocket. Writing the HTTP values raw made the
+    two channels disagree, so every 3s poll flipped media_duration/media_position
+    and the frontend flickered.
+    """
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/power", payload={"system": "on"})
+        mock.get(
+            "http://192.168.1.100:15081/nowplaying",
+            payload={"transportState": 2, "duration": "223533", "transportPosition": "18099"},
+        )
+        mock.get("http://192.168.1.100:15081/levels/room", payload={})
+        await client.poll_state()
+
+    polled = (state.media_info.duration, state.media_info.position)
+
+    await client._handle_message(
+        """
+        {
+            "data": {"state": "playing", "status": {"duration": 223533}},
+            "playTime": {"i64_": 18099}
+        }
+        """
+    )
+
+    assert (state.media_info.duration, state.media_info.position) == polled
 
 
 async def test_poll_state_device_off(hass, state):
@@ -584,31 +633,27 @@ async def test_websocket_updates_metadata(hass, state):
     assert state.media_info.duration == 120
     assert state.media_info.position == 45
     assert state.media_info.image_url == "http://example.com/icon.jpg"
-    assert state.source == "Spotify"
 
 
-async def test_websocket_source_prefers_spotify_context_over_playlist_title(hass, state):
-    """A Spotify Connect playlist/queue name (mediaRoles.title) must not shadow the actual source.
+async def test_websocket_never_writes_source(hass, state):
+    """The WebSocket must leave `source` alone; the poll owns it.
 
-    Naim's status payload includes mediaRoles.title for the currently-loaded playlist/queue
-    (e.g. "Liked Songs"), separate from contextPath, which identifies the streaming service.
-    Source detection must resolve to "Spotify" here, not the playlist name, otherwise the
-    Home Assistant source dropdown reports a value absent from source_list.
+    Deriving a source name from contextPath/mediaRoles made the WebSocket fight the
+    poll's canonical `inputs/<id>` value: every poll flipped the source and the next
+    WebSocket message flipped it back, a few times a second.
     """
     client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    state.source = "inputs/spotify"
+
     await client._handle_message(
         """
         {
             "data": {
                 "state": "playing",
-                "trackRoles": {
-                    "title": "I'll Fly Away"
-                },
+                "trackRoles": {"title": "I'll Fly Away"},
                 "mediaRoles": {
                     "title": "Liked Songs",
-                    "mediaData": {
-                        "metaData": {}
-                    }
+                    "mediaData": {"metaData": {"serviceID": "roon"}}
                 },
                 "contextPath": "spotify:user:liked_songs"
             }
@@ -616,4 +661,4 @@ async def test_websocket_source_prefers_spotify_context_over_playlist_title(hass
         """
     )
 
-    assert state.source == "Spotify"
+    assert state.source == "inputs/spotify"
