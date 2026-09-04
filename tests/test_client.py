@@ -719,3 +719,11 @@ async def test_websocket_never_writes_source(hass, state):
     )
 
     assert state.source == "inputs/spotify"
+
+
+async def test_seek(hass, state):
+    """Seek is a nowplaying command carrying the target position in milliseconds."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/nowplaying?cmd=seek&position=109568", payload={})
+        await client.seek(109568)

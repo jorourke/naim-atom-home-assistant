@@ -102,6 +102,10 @@ class NaimClient:
         """Send a playback command."""
         await self.send_command("nowplaying", cmd)
 
+    async def seek(self, position_ms: int) -> None:
+        """Seek the current track. The device takes milliseconds."""
+        await self.send_command("nowplaying", "seek", position=position_ms)
+
     async def poll_state(self) -> None:
         """Fetch full device state via HTTP and write it to state.
 

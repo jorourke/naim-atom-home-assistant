@@ -31,6 +31,7 @@ def mock_player(hass):
         client.set_power = AsyncMock()
         client.send_playback_command = AsyncMock()
         client.select_input = AsyncMock()
+        client.seek = AsyncMock()
 
         player = NaimPlayer(hass, "Test Naim", "192.168.1.100")
         player._client = client
@@ -386,6 +387,18 @@ async def test_media_previous_track(mock_player):
     """Test previous track delegates to client."""
     await mock_player.async_media_previous_track()
     mock_player._client.send_playback_command.assert_called_once_with("prev")
+
+
+async def test_media_seek(mock_player):
+    """The device takes a position in milliseconds; Home Assistant gives seconds."""
+    await mock_player.async_media_seek(109.568)
+    mock_player._client.seek.assert_called_once_with(109568)
+
+
+async def test_media_seek_clamps_negative(mock_player):
+    """A drag to the very start of the bar can arrive as a small negative."""
+    await mock_player.async_media_seek(-0.4)
+    mock_player._client.seek.assert_called_once_with(0)
 
 
 async def test_select_source(mock_player):
