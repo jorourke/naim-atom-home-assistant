@@ -283,6 +283,63 @@ async def test_poll_state_device_on(hass, state):
     assert state.media_info.image_url == "http://example.com/art.jpg"
 
 
+async def test_poll_state_title_holds_when_source_unchanged_and_device_drops_it(hass, state):
+    """A passive input (Analogue, etc.) has no real track metadata, and the device's
+    nowplaying response intermittently omits "title" between polls even while the
+    source is unchanged — writing that through flickered the displayed title on and
+    off every ~3s. The last known title must survive a poll that drops it, as long
+    as the source hasn't actually changed.
+    """
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/power", payload={"system": "on"})
+        mock.get(
+            "http://192.168.1.100:15081/nowplaying",
+            payload={"transportState": 1, "title": "Analogue 1", "source": "inputs/analog1"},
+        )
+        mock.get("http://192.168.1.100:15081/levels/room", payload={})
+        await client.poll_state()
+
+    assert state.media_info.title == "Analogue 1"
+
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/power", payload={"system": "on"})
+        mock.get(
+            "http://192.168.1.100:15081/nowplaying",
+            payload={"transportState": 1, "source": "inputs/analog1"},
+        )
+        mock.get("http://192.168.1.100:15081/levels/room", payload={})
+        await client.poll_state()
+
+    assert state.media_info.title == "Analogue 1"
+
+
+async def test_poll_state_title_clears_when_source_changes(hass, state):
+    """A missing title IS meaningful once the source has actually changed."""
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/power", payload={"system": "on"})
+        mock.get(
+            "http://192.168.1.100:15081/nowplaying",
+            payload={"transportState": 1, "title": "Analogue 1", "source": "inputs/analog1"},
+        )
+        mock.get("http://192.168.1.100:15081/levels/room", payload={})
+        await client.poll_state()
+
+    assert state.media_info.title == "Analogue 1"
+
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/power", payload={"system": "on"})
+        mock.get(
+            "http://192.168.1.100:15081/nowplaying",
+            payload={"transportState": 1, "source": "inputs/analog2"},
+        )
+        mock.get("http://192.168.1.100:15081/levels/room", payload={})
+        await client.poll_state()
+
+    assert state.media_info.title is None
+
+
 async def test_poll_and_websocket_agree_on_media_info(hass, state):
     """The poll and the WebSocket must write identical values for the same track.
 

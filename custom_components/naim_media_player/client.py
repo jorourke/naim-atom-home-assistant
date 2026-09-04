@@ -132,7 +132,6 @@ class NaimClient:
         updates: dict[str, Any] = {
             "power_state": MediaPlayerState.ON,
             "playing_state": playing_state,
-            "title": nowplaying.get("title"),
             "artist": nowplaying.get("artistName"),
             "album": nowplaying.get("albumName"),
             # The HTTP API reports these as millisecond strings and the WebSocket
@@ -143,6 +142,16 @@ class NaimClient:
             "position": _ms_to_seconds(nowplaying.get("transportPosition")),
             "image_url": nowplaying.get("artwork"),
         }
+
+        # Passive inputs (Analogue, etc.) have no real track metadata, and the
+        # device's nowplaying response intermittently omits "title" between polls
+        # even while the source is unchanged — writing that through flickered the
+        # displayed title on and off every ~3s. Only clear it when the source has
+        # actually changed.
+        title = nowplaying.get("title")
+        raw_source = nowplaying.get("source")
+        if title or (raw_source is not None and raw_source != self._state.source):
+            updates["title"] = title
 
         if "volume" in levels:
             with contextlib.suppress(TypeError, ValueError):
