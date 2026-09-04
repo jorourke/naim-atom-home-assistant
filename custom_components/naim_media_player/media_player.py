@@ -71,6 +71,7 @@ class NaimPlayer(MediaPlayerEntity):
         | MediaPlayerEntityFeature.SELECT_SOURCE
         | MediaPlayerEntityFeature.NEXT_TRACK
         | MediaPlayerEntityFeature.PREVIOUS_TRACK
+        | MediaPlayerEntityFeature.SEEK
     )
 
     DEFAULT_SOURCE_MAP = {
@@ -286,6 +287,10 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_media_previous_track(self) -> None:
         """Skip to the previous track."""
         await self._client.send_playback_command("prev")
+
+    async def async_media_seek(self, position: float) -> None:
+        """Seek to a position in the current track."""
+        await self._client.seek(max(0, round(position * 1000)))
 
     async def async_select_source(self, source: str) -> None:
         """Select a source."""

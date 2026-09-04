@@ -10,6 +10,7 @@ updates via WebSocket connection.
 
 - 🎵 Full playback controls (play, pause, next/previous track)
 - ⏱️ Media position and duration tracking
+- ⏩ Seek within the current track
 - 🔊 Volume control with 5% increments
 - 🔇 Mute functionality
 
