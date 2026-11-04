@@ -108,7 +108,7 @@ async def async_get_available_inputs(hass, ip_address: str, port: int = DEFAULT_
     sources = {}
     for child in children:
         if child.get("selectable") == "1":
-            name = child.get("name")
+            name = child.get("alias") or child.get("name")
             ussi = child.get("ussi", "")
             # Extract input ID from ussi (e.g., "inputs/ana1" -> "ana1")
             input_id = ussi.split("/")[-1] if "/" in ussi else ussi
