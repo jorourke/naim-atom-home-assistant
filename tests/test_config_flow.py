@@ -205,6 +205,32 @@ async def test_async_get_available_inputs_success(hass: HomeAssistant) -> None:
     # Hidden input with selectable="0" should not be included
 
 
+async def test_async_get_available_inputs_prefers_alias(hass: HomeAssistant) -> None:
+    """Test a user-set alias replaces the stock name; empty or null aliases fall back to it."""
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(
+        return_value={
+            "children": [
+                {"name": "Analogue 1", "alias": "Turntable", "ussi": "inputs/ana1", "selectable": "1"},
+                {"name": "Digital 1", "alias": "", "ussi": "inputs/dig1", "selectable": "1"},
+                {"name": "Spotify", "alias": None, "ussi": "inputs/spotify", "selectable": "1"},
+            ]
+        }
+    )
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_clientsession",
+        return_value=mock_session,
+    ):
+        result = await async_get_available_inputs(hass, "192.168.1.100")
+
+    assert result == {"Turntable": "ana1", "Digital 1": "dig1", "Spotify": "spotify"}
+
+
 async def test_async_get_available_inputs_http_error(hass: HomeAssistant) -> None:
     """Test handling HTTP error when fetching inputs."""
     mock_response = AsyncMock()
@@ -848,6 +874,39 @@ async def test_options_flow_volume_step_when_unreachable(hass: HomeAssistant) ->
         CONF_SOURCES: {"Analog 1": "ana1"},
         CONF_VOLUME_STEP: 7,
     }
+
+
+async def test_options_flow_after_input_renamed(hass: HomeAssistant) -> None:
+    """Test a source saved under its old name stays ticked, and saves, after a rename on the device."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Test Naim",
+        data={
+            CONF_IP_ADDRESS: "192.168.1.100",
+            CONF_NAME: "Test Naim",
+            CONF_SOURCES: {"Analogue 1": "ana1", "Spotify": "spotify"},
+        },
+    )
+
+    mock_sources = {"Turntable": "ana1", "Spotify": "spotify", "Digital 1": "dig1"}
+
+    with patch(
+        "custom_components.naim_media_player.config_flow.async_get_available_inputs",
+        return_value=mock_sources,
+    ):
+        flow = NaimOptionsFlow(entry)
+        flow.hass = hass
+
+        result = await flow.async_step_init()
+        defaults = next(key.default() for key in result["data_schema"].schema if str(key) == CONF_SOURCES)
+        assert defaults == ["Turntable", "Spotify"]
+
+        # Submitting the defaults unchanged must pass the form's own validation.
+        user_input = result["data_schema"]({CONF_SOURCES: defaults, CONF_VOLUME_STEP: 5})
+        result = await flow.async_step_init(user_input)
+
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_SOURCES] == {"Turntable": "ana1", "Spotify": "spotify"}
 
 
 async def test_options_flow_defaults_to_all_sources(hass: HomeAssistant) -> None:

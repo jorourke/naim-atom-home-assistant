@@ -108,7 +108,7 @@ async def async_get_available_inputs(hass, ip_address: str, port: int = DEFAULT_
     sources = {}
     for child in children:
         if child.get("selectable") == "1":
-            name = child.get("name")
+            name = child.get("alias") or child.get("name")
             ussi = child.get("ussi", "")
             # Extract input ID from ussi (e.g., "inputs/ana1" -> "ana1")
             input_id = ussi.split("/")[-1] if "/" in ussi else ussi
@@ -311,7 +311,11 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
 
         schema_dict: dict[Any, Any] = {}
         if device_reachable:
-            current_source_names = list(current_sources.keys()) if current_sources else []
+            # Match by input ID, not name: a name changes when the input is renamed in the Naim app.
+            current_ids = set(current_sources.values())
+            current_source_names = [
+                name for name, input_id in self._available_sources.items() if input_id in current_ids
+            ]
             # If no current sources, default to all available
             if not current_source_names:
                 current_source_names = list(self._available_sources.keys())
