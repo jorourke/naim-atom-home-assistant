@@ -1,50 +1,58 @@
 {
   "config": {
-      "step": {
-          "user": {
-              "title": "Connect to Naim Device",
-              "description": "Set up your Naim Media Player. Default IP: {default_ip}",
-              "data": {
-                  "ip_address": "IP Address (e.g., 192.168.1.127)",
-                  "name": "Name (e.g., Naim Atom)",
-                  "entity_id": "Entity ID (e.g., naim_atom)",
-                  "volume_step": "Volume Step % (1–20)"
-              }
-          },
-          "sources": {
-              "title": "Select Sources",
-              "description": "Choose which input sources to show for {device_name}. All discovered sources are selected by default.",
-              "data": {
-                  "sources": "Available Sources"
-              }
-          }
+    "step": {
+      "user": {
+        "title": "Connect to Naim Device",
+        "description": "Set up your Naim Media Player. Default IP: {default_ip}",
+        "data": {
+          "ip_address": "IP Address (e.g., 192.168.1.127)",
+          "name": "Name (e.g., Naim Atom)",
+          "entity_id": "Entity ID (e.g., naim_atom)",
+          "volume_step": "Volume Step % (1–20)"
+        }
       },
-      "error": {
-          "cannot_connect": "Failed to connect to device. Please check the IP address and ensure the device is powered on.",
-          "unknown": "Unexpected error occurred during setup",
-          "invalid_auth": "Invalid authentication",
-          "timeout": "Connection timed out",
-          "already_configured": "This Naim device is already configured",
-          "invalid_entity_id": "Invalid entity ID",
-          "invalid_volume_step": "Volume step must be between 1 and 20"
-      },
-      "abort": {
-          "already_configured": "This Naim device is already configured"
+      "sources": {
+        "title": "Select Sources",
+        "description": "Choose which input sources to show for {device_name}. All discovered sources are selected by default.",
+        "data": {
+          "sources": "Available Sources"
+        }
       }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to device. Please check the IP address and ensure the device is powered on.",
+      "unknown": "Unexpected error occurred during setup",
+      "invalid_auth": "Invalid authentication",
+      "timeout": "Connection timed out",
+      "already_configured": "This Naim device is already configured",
+      "invalid_entity_id": "Invalid entity ID",
+      "invalid_volume_step": "Volume step must be between 1 and 20"
+    },
+    "abort": {
+      "already_configured": "This Naim device is already configured"
+    }
   },
   "options": {
-      "step": {
-          "init": {
-              "title": "Configure Sources",
-              "description": "Select which input sources to show for {device_name}.",
-              "data": {
-                  "sources": "Available Sources",
-                  "volume_step": "Volume Step % (1–20)"
-              }
-          }
-      },
-      "abort": {
-          "cannot_connect": "Cannot connect to device. Please ensure it is powered on and try again."
+    "step": {
+      "init": {
+        "title": "Configure Sources",
+        "description": "Select which input sources to show for {device_name}.",
+        "data": {
+          "sources": "Available Sources",
+          "volume_step": "Volume Step % (1–20)"
+        }
       }
+    },
+    "abort": {
+      "cannot_connect": "Cannot connect to device. Please ensure it is powered on and try again."
+    }
+  },
+  "exceptions": {
+    "device_in_standby": {
+      "message": "Naim is in standby; turn it on first."
+    },
+    "invalid_media_id": {
+      "message": "That is not a Naim radio station or favourite."
+    }
   }
 }

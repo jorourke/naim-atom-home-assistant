@@ -13,3 +13,6 @@ DEFAULT_VOLUME_STEP = 5
 CONF_SOURCES = "sources"
 CONF_SERIAL = "serial"
 DEFAULT_MODEL = "Naim Atom"
+CONF_MAX_VOLUME = "max_volume"
+DEFAULT_MAX_VOLUME = 100
+INPUT_REFRESH_INTERVAL = 300  # seconds between re-reading input names from the device
