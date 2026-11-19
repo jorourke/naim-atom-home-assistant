@@ -22,12 +22,16 @@ TRANSPORT_INT_TO_HA_STATE = {
     1: MediaPlayerState.IDLE,
     2: MediaPlayerState.PLAYING,
     3: MediaPlayerState.PAUSED,
+    # Seen on a real Atom while an input or radio station is connecting; the
+    # WebSocket reports the same condition as "transitioning".
+    8: MediaPlayerState.BUFFERING,
 }
 
 TRANSPORT_STRING_TO_HA_STATE = {
     "playing": MediaPlayerState.PLAYING,
     "paused": MediaPlayerState.PAUSED,
     "stopped": MediaPlayerState.IDLE,
+    "transitioning": MediaPlayerState.BUFFERING,
 }
 
 
@@ -81,6 +85,10 @@ class NaimPlayerState:
         self.source = None
         self.available = True
         self.media_info = MediaInfo()
+        # Names of controls the current source cannot do ("pause", "seek", "next",
+        # "previous"), and the now-playing audio format. Only the poll writes these.
+        self.restrictions: frozenset[str] = frozenset()
+        self.audio_format: dict[str, str | int] = {}
 
     async def update(self, source: str = "poll", **kwargs) -> bool:
         """Update state fields and return whether anything changed."""

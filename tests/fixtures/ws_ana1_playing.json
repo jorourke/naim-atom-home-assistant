@@ -1,0 +1,86 @@
+{
+  "data": {
+    "error": "",
+    "mediaRoles": {
+      "audioType": "audioBroadcast",
+      "mediaData": {
+        "metaData": {
+          "live": true,
+          "path": "test://?wave=4&rate=48000&channels=2&format=S16LE",
+          "playLogicPath": "externalinputs:/playLogic",
+          "serviceID": "NaimExtInputs"
+        },
+        "resources": [
+          {
+            "bitRate": 1536000,
+            "bitsPerSample": 16,
+            "mimeType": "audio/x-wav",
+            "nrAudioChannels": 2,
+            "sampleFrequency": 48000,
+            "uri": "test://?wave=4&rate=48000&channels=2&format=S16LE"
+          }
+        ]
+      },
+      "path": "externalinputs:/analogRca1",
+      "timestamp": 1795051958475,
+      "title": "Analogue 1",
+      "type": "audio"
+    },
+    "playId": {
+      "systemMemberId": "np800-693ad3b7-474f-4c7d-afbe-1ee4d174dc8c",
+      "timestamp": 1365697068
+    },
+    "state": "playing",
+    "status": {
+      "byteSeek": true,
+      "duration": -1,
+      "timeSeek": true
+    },
+    "streamId": 67,
+    "trackRoles": {
+      "audioType": "audioBroadcast",
+      "mediaData": {
+        "activeResource": {
+          "bitRate": 1536000,
+          "bitsPerSample": 16,
+          "mimeType": "audio/x-wav",
+          "nrAudioChannels": 2,
+          "sampleFrequency": 48000,
+          "uri": "test://?wave=4&rate=48000&channels=2&format=S16LE"
+        },
+        "metaData": {
+          "live": true,
+          "path": "test://?wave=4&rate=48000&channels=2&format=S16LE",
+          "playLogicPath": "externalinputs:/playLogic",
+          "serviceID": "NaimExtInputs"
+        },
+        "resources": [
+          {
+            "bitRate": 1536000,
+            "bitsPerSample": 16,
+            "mimeType": "audio/x-wav",
+            "nrAudioChannels": 2,
+            "sampleFrequency": 48000,
+            "uri": "test://?wave=4&rate=48000&channels=2&format=S16LE"
+          }
+        ]
+      },
+      "path": "externalinputs:/analogRca1",
+      "persistentMetaData": false,
+      "timestamp": 1795051958475,
+      "title": "Analogue 1",
+      "type": "audio"
+    }
+  },
+  "playTime": {
+    "i64_": 24192,
+    "type": "i64_"
+  },
+  "sender": "np800-693ad3b7-474f-4c7d-afbe-1ee4d174dc8c",
+  "senderMute": {},
+  "senderVolume": {
+    "i32_": 50,
+    "type": "i32_"
+  },
+  "senderVolumeBase": {}
+}

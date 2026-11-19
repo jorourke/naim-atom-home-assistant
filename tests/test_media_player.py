@@ -361,42 +361,49 @@ async def test_mute(mock_player):
 
 async def test_media_play(mock_player):
     """Test play delegates to client."""
+    await _on(mock_player)
     await mock_player.async_media_play()
     mock_player._client.send_playback_command.assert_called_once_with("playpause")
 
 
 async def test_media_pause(mock_player):
     """Test pause delegates to client."""
+    await _on(mock_player)
     await mock_player.async_media_pause()
     mock_player._client.send_playback_command.assert_called_once_with("playpause")
 
 
 async def test_media_stop(mock_player):
     """Test stop delegates to client."""
+    await _on(mock_player)
     await mock_player.async_media_stop()
     mock_player._client.send_playback_command.assert_called_once_with("stop")
 
 
 async def test_media_next_track(mock_player):
     """Test next track delegates to client."""
+    await _on(mock_player)
     await mock_player.async_media_next_track()
     mock_player._client.send_playback_command.assert_called_once_with("next")
 
 
 async def test_media_previous_track(mock_player):
     """Test previous track delegates to client."""
+    await _on(mock_player)
     await mock_player.async_media_previous_track()
     mock_player._client.send_playback_command.assert_called_once_with("prev")
 
 
 async def test_media_seek(mock_player):
     """The device takes a position in milliseconds; Home Assistant gives seconds."""
+    await _on(mock_player)
     await mock_player.async_media_seek(109.568)
     mock_player._client.seek.assert_called_once_with(109568)
 
 
 async def test_media_seek_clamps_negative(mock_player):
     """A drag to the very start of the bar can arrive as a small negative."""
+    await _on(mock_player)
     await mock_player.async_media_seek(-0.4)
     mock_player._client.seek.assert_called_once_with(0)
 
@@ -467,3 +474,279 @@ async def test_async_setup_entry_unique_id_matches_entry_for_ip_fallback(hass):
         await async_setup_entry(hass, entry, fake_add_entities)
 
     assert added_entities[0].unique_id == entry.unique_id == "192.168.1.100"
+
+
+# --- Competitor-parity features: capability flags, format, cap, standby, refresh, favourites ---
+
+from aioresponses import aioresponses  # noqa: E402
+from homeassistant.components.media_player import MediaPlayerEntityFeature as F  # noqa: E402
+from homeassistant.exceptions import ServiceValidationError  # noqa: E402
+
+from custom_components.naim_media_player.const import CONF_MAX_VOLUME, CONF_SOURCES  # noqa: E402
+
+
+async def _on(player, **kwargs):
+    await player._state.update(source="poll", power_state=MediaPlayerState.ON, **kwargs)
+
+
+async def test_features_unchanged_when_flags_absent(mock_player):
+    assert mock_player.supported_features == (
+        F.PAUSE
+        | F.VOLUME_SET
+        | F.VOLUME_MUTE
+        | F.TURN_ON
+        | F.TURN_OFF
+        | F.PLAY
+        | F.STOP
+        | F.SELECT_SOURCE
+        | F.NEXT_TRACK
+        | F.PREVIOUS_TRACK
+        | F.SEEK
+        | F.BROWSE_MEDIA
+        | F.PLAY_MEDIA
+    )
+
+
+@pytest.mark.parametrize(
+    ("control", "feature"),
+    [("pause", F.PAUSE), ("seek", F.SEEK), ("next", F.NEXT_TRACK), ("previous", F.PREVIOUS_TRACK)],
+)
+async def test_restriction_removes_feature_and_clearing_restores_it(mock_player, control, feature):
+    await mock_player._state.update(source="poll", restrictions=frozenset({control}))
+    assert not mock_player.supported_features & feature
+    assert mock_player.supported_features & F.PLAY
+    await mock_player._state.update(source="poll", restrictions=frozenset())
+    assert mock_player.supported_features & feature
+
+
+async def test_audio_format_attributes(mock_player):
+    await _on(mock_player, audio_format={"codec": "AAC", "sample_rate": 44100, "bit_rate": 126431})
+    assert mock_player.extra_state_attributes == {
+        "audio_codec": "AAC",
+        "audio_sample_rate": 44100,
+        "audio_bit_rate": 126431,
+    }
+
+
+async def test_audio_format_attributes_empty_when_missing_or_off(mock_player):
+    await _on(mock_player)
+    assert not mock_player.extra_state_attributes
+    await _on(mock_player, audio_format={"codec": "AAC"})
+    await mock_player._state.update(source="poll", power_state=MediaPlayerState.OFF)
+    assert not mock_player.extra_state_attributes
+
+
+async def test_buffering_state_shown(mock_player):
+    await _on(mock_player, playing_state=MediaPlayerState.BUFFERING)
+    assert mock_player.state == MediaPlayerState.BUFFERING
+
+
+# -- standby
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        ("async_media_play", ()),
+        ("async_media_pause", ()),
+        ("async_media_stop", ()),
+        ("async_media_next_track", ()),
+        ("async_media_previous_track", ()),
+        ("async_media_seek", (10,)),
+        ("async_play_media", ("channel", "inputs/radio/favourites/1")),
+    ],
+)
+async def test_transport_commands_in_standby_raise_and_send_nothing(hass, method):
+    player = NaimPlayer(hass, "Test", "192.168.1.100")
+    name, args = method
+    with aioresponses() as mock:
+        with pytest.raises(ServiceValidationError) as err:
+            await getattr(player, name)(*args)
+        assert not mock.requests
+    assert err.value.translation_domain == DOMAIN
+    assert err.value.translation_key == "device_in_standby"
+
+
+async def test_select_source_in_standby_still_sends_select(hass):
+    player = NaimPlayer(hass, "Test", "192.168.1.100", sources={"Analog 1": "ana1"})
+    with aioresponses() as mock:
+        mock.get("http://192.168.1.100:15081/inputs/ana1?cmd=select", status=200, payload={})
+        await player.async_select_source("Analog 1")
+        mock.assert_called_once()
+    assert player._state.power_state == MediaPlayerState.OFF  # never claims power-on
+
+
+async def test_transport_commands_work_when_on(mock_player):
+    await _on(mock_player)
+    await mock_player.async_media_pause()
+    mock_player._client.send_playback_command.assert_awaited_once_with("playpause")
+
+
+# -- volume cap
+
+
+def _capped(mock_player, cap, volume_percent):
+    mock_player._max_volume = cap
+    mock_player._state.volume = volume_percent / 100
+    return mock_player
+
+
+async def test_volume_set_stops_at_cap(mock_player):
+    await _capped(mock_player, 50, 10).async_set_volume_level(0.9)
+    mock_player._client.set_volume.assert_awaited_once_with(50)
+
+
+async def test_volume_set_above_cap_never_lowers_volume(mock_player):
+    await _capped(mock_player, 50, 70).async_set_volume_level(0.8)
+    mock_player._client.set_volume.assert_awaited_once_with(70)
+
+
+async def test_volume_up_stops_at_cap(mock_player):
+    await _capped(mock_player, 40, 38).async_volume_up()
+    mock_player._client.set_volume.assert_awaited_once_with(40)
+
+
+async def test_volume_up_above_cap_does_nothing_and_down_still_works(mock_player):
+    _capped(mock_player, 50, 70)
+    await mock_player.async_volume_up()
+    mock_player._client.set_volume.assert_not_awaited()
+    await mock_player.async_volume_down()
+    mock_player._client.set_volume.assert_awaited_once_with(65)
+
+
+async def test_default_cap_leaves_volume_calls_unchanged(mock_player):
+    assert mock_player._max_volume == 100
+    mock_player._state.volume = 0.98
+    await mock_player.async_volume_up()
+    mock_player._client.set_volume.assert_awaited_once_with(100)
+    await mock_player.async_set_volume_level(1.0)
+    mock_player._client.set_volume.assert_awaited_with(100)
+
+
+async def test_setup_entry_passes_max_volume_option(hass):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_IP_ADDRESS: "192.168.1.100", CONF_NAME: "Test Naim"},
+        options={CONF_MAX_VOLUME: 40},
+    )
+    entry.add_to_hass(hass)
+    added = []
+    with patch("custom_components.naim_media_player.media_player.NaimClient"):
+        await async_setup_entry(hass, entry, lambda entities, update_before_add=False: added.extend(entities))
+    assert added[0]._max_volume == 40
+    assert entry.runtime_data is added[0]
+
+
+# -- input name refresh
+
+
+async def test_refresh_renames_sources_in_memory_only(hass):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_IP_ADDRESS: "192.168.1.100", CONF_SOURCES: {"Analog 1": "ana1", "HDMI": "hdmi"}},
+    )
+    entry.add_to_hass(hass)
+    added = []
+    with patch("custom_components.naim_media_player.media_player.NaimClient") as client_cls:
+        await async_setup_entry(hass, entry, lambda entities, update_before_add=False: added.extend(entities))
+        player = added[0]
+        client_cls.return_value.get_inputs = AsyncMock(
+            return_value={"Turntable": "ana1", "HDMI": "hdmi", "Digital 1": "dig1"}
+        )
+        client_cls.return_value.select_input = AsyncMock()
+        player._state.source = "inputs/ana1"
+        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as reload:
+            await player._async_refresh_input_names()
+            await hass.async_block_till_done()
+
+    assert player.source == "Turntable"
+    assert player.source_list == ["Turntable", "HDMI"]  # selection kept; dig1 not added
+    reload.assert_not_called()
+    assert entry.data == {CONF_IP_ADDRESS: "192.168.1.100", CONF_SOURCES: {"Analog 1": "ana1", "HDMI": "hdmi"}}
+    assert entry.options == {}
+    await player.async_select_source("Turntable")
+    player._client.select_input.assert_awaited_once_with("ana1")
+
+
+@pytest.mark.parametrize("result", [None, {}])
+async def test_refresh_failure_keeps_old_names(mock_player, result):
+    mock_player._client.get_inputs = AsyncMock(return_value=result)
+    before = list(mock_player.source_list)
+    await mock_player._async_refresh_input_names()
+    assert mock_player.source_list == before
+
+
+# -- favourites
+
+
+async def test_browse_media_lists_favourites(mock_player):
+    mock_player._client.get_radio_favourites = AsyncMock(
+        return_value=[{"name": "Jazz", "id": "inputs/radio/favourites/1", "image": None}]
+    )
+    root = await mock_player.async_browse_media()
+    assert [(c.title, c.media_content_id, c.can_play) for c in root.children] == [
+        ("Jazz", "inputs/radio/favourites/1", True)
+    ]
+
+
+async def test_browse_media_without_favourites_is_empty_not_error(mock_player):
+    mock_player._client.get_radio_favourites = AsyncMock(return_value=[])
+    root = await mock_player.async_browse_media()
+    assert root.children == []
+
+
+async def test_play_media_plays_favourite(mock_player):
+    await _on(mock_player)
+    mock_player._client.play_radio_item = AsyncMock()
+    await mock_player.async_play_media("channel", "inputs/radio/favourites/1")
+    mock_player._client.play_radio_item.assert_awaited_once_with("inputs/radio/favourites/1")
+
+
+async def test_play_media_rejects_non_radio_path(mock_player):
+    await _on(mock_player)
+    mock_player._client.play_radio_item = AsyncMock()
+    with pytest.raises(ServiceValidationError) as err:
+        await mock_player.async_play_media("channel", "system")
+    assert err.value.translation_key == "invalid_media_id"
+    mock_player._client.play_radio_item.assert_not_awaited()
+
+
+# -- code review fixes
+
+
+@pytest.mark.parametrize("method", ["async_media_play", "async_play_media"])
+async def test_turn_on_then_play_is_sent_while_device_still_reports_standby(mock_player, method):
+    """The device reports standby for ~20s after waking, so play right after turn_on must still be sent."""
+    mock_player._client.play_radio_item = AsyncMock()
+    await mock_player.async_turn_on()
+    assert mock_player.state == MediaPlayerState.OFF
+    args = ("channel", "inputs/radio/favourites/1") if method == "async_play_media" else ()
+    await getattr(mock_player, method)(*args)
+    sent = mock_player._client.play_radio_item if args else mock_player._client.send_playback_command
+    sent.assert_awaited_once()
+
+
+async def test_standby_error_returns_after_wake_grace(mock_player):
+    await mock_player.async_turn_on()
+    mock_player._turned_on_at -= 31
+    with pytest.raises(ServiceValidationError):
+        await mock_player.async_media_play()
+
+
+async def test_play_media_rejects_dot_dot_path(mock_player):
+    await _on(mock_player)
+    mock_player._client.play_radio_item = AsyncMock()
+    with pytest.raises(ServiceValidationError) as err:
+        await mock_player.async_play_media("channel", "inputs/radio/../../power")
+    assert err.value.translation_key == "invalid_media_id"
+    mock_player._client.play_radio_item.assert_not_awaited()
+
+
+async def test_input_names_refresh_once_when_added(hass, mock_player):
+    mock_player.hass = hass
+    mock_player._source_map = {"Analog 1": "ana1"}
+    mock_player._client.get_inputs = AsyncMock(return_value={"Turntable": "ana1"})
+    await mock_player.async_added_to_hass()
+    await hass.async_block_till_done()
+    assert mock_player.source_list == ["Turntable"]
+    mock_player._call_on_remove_callbacks()

@@ -1,29 +1,38 @@
 """Media player entity for Naim devices."""
 
 import logging
+import time
 from datetime import datetime, timedelta
 
 from homeassistant.components.media_player import (
+    BrowseMedia,
+    MediaClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
+    MediaType,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
 
 from .client import NaimClient
+from .config_flow import get_max_volume
 from .const import (
     CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
     DEFAULT_HTTP_PORT,
+    DEFAULT_MAX_VOLUME,
     DEFAULT_MODEL,
     DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_VOLUME_STEP,
     DOMAIN,
+    INPUT_REFRESH_INTERVAL,
 )
 from .state import NaimPlayerState
 
@@ -33,6 +42,8 @@ _LOGGER = logging.getLogger(__name__)
 # continuously even while the device is in standby, so polling /power is the only
 # way to detect an externally-triggered power-on (e.g. via Spotify Connect).
 SCAN_INTERVAL = timedelta(seconds=3)
+# The device can report standby for ~20s after being woken (see CLAUDE.md).
+WAKE_GRACE_SECONDS = 30
 
 
 async def async_setup_entry(
@@ -51,16 +62,17 @@ async def async_setup_entry(
     sources = entry.options.get(CONF_SOURCES) or entry.data.get(CONF_SOURCES)
     serial = entry.data.get(CONF_SERIAL)
 
-    async_add_entities(
-        [NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources, serial, entry.unique_id)],
-        True,
-    )
+    max_volume = get_max_volume(entry)
+
+    player = NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources, serial, entry.unique_id, max_volume)
+    entry.runtime_data = player  # read by diagnostics
+    async_add_entities([player], True)
 
 
 class NaimPlayer(MediaPlayerEntity):
     """Thin Home Assistant entity adapter for Naim devices."""
 
-    _attr_supported_features = (
+    _BASE_FEATURES = (
         MediaPlayerEntityFeature.PAUSE
         | MediaPlayerEntityFeature.VOLUME_SET
         | MediaPlayerEntityFeature.VOLUME_MUTE
@@ -72,7 +84,17 @@ class NaimPlayer(MediaPlayerEntity):
         | MediaPlayerEntityFeature.NEXT_TRACK
         | MediaPlayerEntityFeature.PREVIOUS_TRACK
         | MediaPlayerEntityFeature.SEEK
+        | MediaPlayerEntityFeature.BROWSE_MEDIA
+        | MediaPlayerEntityFeature.PLAY_MEDIA
     )
+
+    # Controls a source can restrict (state.restrictions) and the feature each one removes.
+    _RESTRICTION_FEATURES = {
+        "pause": MediaPlayerEntityFeature.PAUSE,
+        "seek": MediaPlayerEntityFeature.SEEK,
+        "next": MediaPlayerEntityFeature.NEXT_TRACK,
+        "previous": MediaPlayerEntityFeature.PREVIOUS_TRACK,
+    }
 
     DEFAULT_SOURCE_MAP = {
         "Analog 1": "ana1",
@@ -96,6 +118,7 @@ class NaimPlayer(MediaPlayerEntity):
         sources: dict[str, str] | None = None,
         serial: str | None = None,
         unique_id: str | None = None,
+        max_volume: int = DEFAULT_MAX_VOLUME,
     ) -> None:
         """Initialize the media player.
 
@@ -110,6 +133,7 @@ class NaimPlayer(MediaPlayerEntity):
         self._attr_name = name
         self._ip_address = ip_address
         self._volume_step = volume_step / 100
+        self._max_volume = max_volume
 
         if entity_id:
             self.entity_id = f"media_player.{entity_id}"
@@ -129,6 +153,7 @@ class NaimPlayer(MediaPlayerEntity):
         self._source_map = sources if sources else self.DEFAULT_SOURCE_MAP.copy()
         self._source_list = list(self._source_map.keys())
         self._input_names = {input_id: name for name, input_id in self._source_map.items()}
+        self._turned_on_at = float("-inf")
         self._state = NaimPlayerState(
             on_change=self._write_state_when_registered,
             debounce_timeout=2.0,
@@ -152,8 +177,94 @@ class NaimPlayer(MediaPlayerEntity):
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
-        """Start push updates when Home Assistant adds the entity."""
+        """Start push updates and the periodic input-name refresh."""
         await self._client.start_websocket()
+        # Run once now, so renames show straight after a restart instead of on the first timer tick.
+        self.hass.async_create_task(self._async_refresh_input_names())
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass, self._async_refresh_input_names, timedelta(seconds=INPUT_REFRESH_INTERVAL)
+            )
+        )
+
+    async def _async_refresh_input_names(self, _now: datetime | None = None) -> None:
+        """Apply input renames made in the Naim app, in memory only.
+
+        The config entry is never written: its update listener reloads the entry. The user's
+        selected inputs (by ID) are kept, and inputs that appeared on the device are not added.
+        """
+        device_inputs = await self._client.get_inputs()
+        if not device_inputs:
+            _LOGGER.debug("Input name refresh skipped; keeping the current names")
+            return
+        device_names = {input_id: name for name, input_id in device_inputs.items()}
+        source_map = {device_names.get(input_id, name): input_id for name, input_id in self._source_map.items()}
+        if len(source_map) != len(self._source_map):
+            _LOGGER.debug("Input name refresh skipped; renamed inputs would share a name")
+            return
+        if source_map == self._source_map:
+            return
+        self._source_map = source_map
+        self._source_list = list(source_map)
+        self._input_names = {input_id: name for name, input_id in source_map.items()}
+        self._write_state_when_registered()
+
+    @property
+    def supported_features(self) -> MediaPlayerEntityFeature:
+        """Drop the controls the current source reports as restricted (e.g. pause on radio)."""
+        features = self._BASE_FEATURES
+        for control in self._state.restrictions:
+            features &= ~self._RESTRICTION_FEATURES[control]
+        return features
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | int]:
+        """Return the now-playing audio format the device reported, leaving out missing fields."""
+        if self._state.state == MediaPlayerState.OFF:
+            return {}
+        return {f"audio_{key}": value for key, value in self._state.audio_format.items()}
+
+    def _require_on(self) -> None:
+        """Raise a clear error for transport commands, which the device ignores in standby.
+
+        Right after turn_on the device keeps reporting standby for up to ~20s, so "turn on, then play"
+        must not be refused in that window; the command is sent as it was before this check existed.
+        """
+        if self._state.state == MediaPlayerState.OFF and time.monotonic() - self._turned_on_at > WAKE_GRACE_SECONDS:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="device_in_standby")
+
+    async def async_browse_media(
+        self, media_content_type: str | None = None, media_content_id: str | None = None
+    ) -> BrowseMedia:
+        """Browse the saved radio favourites."""
+        favourites = await self._client.get_radio_favourites()
+        return BrowseMedia(
+            title="Radio favourites",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id="favourites",
+            media_content_type=MediaType.CHANNEL,
+            can_play=False,
+            can_expand=True,
+            children=[
+                BrowseMedia(
+                    title=favourite["name"],
+                    media_class=MediaClass.CHANNEL,
+                    media_content_id=favourite["id"],
+                    media_content_type=MediaType.CHANNEL,
+                    can_play=True,
+                    can_expand=False,
+                    thumbnail=favourite["image"],
+                )
+                for favourite in favourites
+            ],
+        )
+
+    async def async_play_media(self, media_type: str, media_id: str, **kwargs) -> None:
+        """Play a radio favourite chosen from the media browser."""
+        self._require_on()
+        if not media_id.startswith("inputs/radio/") or ".." in media_id.split("/"):
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="invalid_media_id")
+        await self._client.play_radio_item(media_id)
 
     @property
     def available(self) -> bool:
@@ -239,6 +350,7 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_turn_on(self) -> None:
         """Turn on the device."""
         await self._client.set_power(True)
+        self._turned_on_at = time.monotonic()
 
     async def async_turn_off(self) -> None:
         """Turn off the device."""
@@ -247,13 +359,20 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level."""
         volume = max(0.0, min(1.0, volume))
-        await self._client.set_volume(int(round(volume * 100)))
+        current = int(round(self._state.volume * 100))
+        # Cap only raises; never push the volume below where the device already is.
+        await self._client.set_volume(min(int(round(volume * 100)), max(self._max_volume, current)))
 
     async def _async_step_volume(self, direction: int) -> None:
         """Change volume by one configured step in the given direction (+1/-1)."""
         current_percent = int(round(self._state.volume * 100))
+        if direction > 0 and current_percent > self._max_volume:
+            # Set from the Naim app: never pull the volume down on the user's behalf.
+            return
         step_percent = int(round(self._volume_step * 100))
-        target_percent = max(0, min(100, current_percent + direction * step_percent))
+        target_percent = max(0, current_percent + direction * step_percent)
+        if direction > 0:
+            target_percent = min(self._max_volume, target_percent)
         await self._client.set_volume(target_percent)
 
     async def async_volume_up(self) -> None:
@@ -270,26 +389,32 @@ class NaimPlayer(MediaPlayerEntity):
 
     async def async_media_play(self) -> None:
         """Play or resume media."""
+        self._require_on()
         await self._client.send_playback_command("playpause")
 
     async def async_media_pause(self) -> None:
         """Pause media."""
+        self._require_on()
         await self._client.send_playback_command("playpause")
 
     async def async_media_stop(self) -> None:
         """Stop media."""
+        self._require_on()
         await self._client.send_playback_command("stop")
 
     async def async_media_next_track(self) -> None:
         """Skip to the next track."""
+        self._require_on()
         await self._client.send_playback_command("next")
 
     async def async_media_previous_track(self) -> None:
         """Skip to the previous track."""
+        self._require_on()
         await self._client.send_playback_command("prev")
 
     async def async_media_seek(self, position: float) -> None:
         """Seek to a position in the current track."""
+        self._require_on()
         await self._client.seek(max(0, round(position * 1000)))
 
     async def async_select_source(self, source: str) -> None:

@@ -29,7 +29,8 @@ HTTP requests  WebSocket   NaimPlayerState (state.py)
 - **`media_player.py`** - Thin HA entity adapter; delegates I/O to `client.py` and reads all state from `state.py`
 - **`client.py`** - Consolidated HTTP API client + WebSocket listener (`NaimClient`); owns retries/backoff and WebSocket reconnect/buffering
 - **`state.py`** - `NaimPlayerState`/`MediaInfo`; single source of truth for device state, updated only via `NaimPlayerState.update(...)` under an `asyncio.Lock`, with debounce and value-guard logic
-- **`config_flow.py`** - UI setup + options flow; device discovery (serial, inputs) and identity (unique_id) resolution
+- **`config_flow.py`** - UI setup, zeroconf discovery (`_sues800device._tcp`, manufacturer `naim*`), reconfigure (change host, same serial only) and options flow (sources, volume step, max volume); device discovery (serial, inputs) and identity (unique_id = `serial or ip`) resolution
+- **`diagnostics.py`** - Download-diagnostics: entry data/options plus a state snapshot, with IP, host and serial redacted (reads `entry.runtime_data`, the player set by `media_player.py`)
 - **`const.py`** - Configuration constants (ports, intervals, steps)
 - **`exceptions.py`** - Custom exception hierarchy
 
@@ -81,6 +82,12 @@ every poll and the frontend flickers a few times a second:
   produced `"Spotify"` against the poll's `"inputs/spotify"`, and the two fought forever.
 - **`duration` / `position`** — the device reports milliseconds on both channels (strings over
   HTTP, numbers over the WebSocket). Both paths convert to seconds before writing.
+- **`restrictions` / `audio_format`** — the poll owns both. `/nowplaying` `restrictPause|Seek|SkipNext|SkipPrev`
+  count as restricted only when the 128 bit is set (radio reports 128; `restrictPause` is `1` while merely
+  paused). The WebSocket `controls` block disagrees with HTTP, so it never writes them. Features drop
+  PAUSE/SEEK/NEXT/PREVIOUS while restricted; absent flags mean all features stay on.
+- **`playing_state` BUFFERING** — HTTP `transportState` `8` and WebSocket `"transitioning"` both map to
+  `BUFFERING`.
 - **`power_state`** — `set_power` reports standby immediately but never reports power-on. The
   device applies standby at once, but can keep reporting standby for **~20s** after being told
   to wake, so claiming `ON` published a value the next poll contradicted (on → off → on) and
@@ -97,6 +104,20 @@ async def set_volume(self, volume: int) -> None:
     await self.set_value("levels/room", {"volume": volume})  # raises on failure
     await self._state.update(source="user", volume=volume / 100)  # only reached on success
 ```
+
+### Standby, volume cap, input names
+- In standby (`/power` `lona`) the device ignores transport commands. `media_play/pause/stop`, next/previous,
+  `media_seek` and `play_media` raise a translated `ServiceValidationError` (`device_in_standby`) and send nothing.
+  `select_source` stays allowed: on an Atom it wakes the device.
+  For `WAKE_GRACE_SECONDS` (30s) after `turn_on` these commands are sent anyway, because the device keeps
+  reporting standby while it wakes, so "turn on, then play" still works.
+- `CONF_MAX_VOLUME` (option, 1-100, default 100) caps `volume_set` and `volume_up`. Above the cap, `volume_up`
+  does nothing; the integration never lowers volume on its own.
+- `NaimPlayer._async_refresh_input_names` re-reads `/inputs` every `INPUT_REFRESH_INTERVAL` seconds and renames
+  sources in memory only, keyed by input ID. It also runs once when the entity is added. It must never write the config entry (the update listener reloads).
+- Radio favourites are played through `browse_media`/`play_media` (`inputs/radio/...` paths only).
+- Audio format (`audio_codec`, `audio_sample_rate`, `audio_bit_depth`, `audio_bit_rate`, `audio_channels`) is
+  exposed as media player `extra_state_attributes`, not a sensor: one write, no extra entity.
 
 ### Retry Logic
 ```python
@@ -218,6 +239,7 @@ CONF_VOLUME_STEP = "volume_step" # user-configurable, 1-20 (integer percent)
 DEFAULT_VOLUME_STEP = 5          # 5% default
 CONF_SOURCES = "sources"         # discovered/selected input map, stored per config entry
 CONF_SERIAL = "serial"           # device serial, used for identity + device registry
+CONF_MAX_VOLUME = "max_volume"   # option, 1-100, default 100
 SOCKET_RECONNECT_INTERVAL = 5    # seconds
 ```
 
@@ -286,7 +308,8 @@ custom_components/naim_media_player/
 ├── state.py              # NaimPlayerState / MediaInfo — single source of truth
 ├── client.py             # Consolidated HTTP API client + WebSocket listener
 ├── media_player.py       # Main entity implementation
-├── config_flow.py        # UI configuration + options flow
+├── config_flow.py        # UI configuration, zeroconf, reconfigure, options flow
+├── diagnostics.py        # Redacted diagnostics download
 ├── manifest.json         # Integration metadata
 └── translations/
     └── en.json           # UI strings
@@ -300,7 +323,8 @@ tests/
 ├── test_state.py         # State management tests
 ├── test_media_player.py  # Entity tests
 ├── test_config_flow.py   # Config flow tests
-├── test_init.py          # Integration setup tests
+├── test_init.py          # Integration setup + diagnostics tests
+├── helpers.py / fixtures/ # Payloads captured from a real Atom (`fx(name)`)
 └── test_ha_stage.py      # Deploy helper tests (mocked)
 ```
 
@@ -326,7 +350,7 @@ tests/
 - Use async/await for all I/O
 - Add type hints where helpful (but not required)
 - Follow Home Assistant entity patterns
-- Keep line length reasonable (~100 chars)
+- Line length 120 (ruff, set in pyproject)
 - Use `_LOGGER` for debug/error logging
 
 ### Commit Messages
