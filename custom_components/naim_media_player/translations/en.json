@@ -17,6 +17,17 @@
         "data": {
           "sources": "Available Sources"
         }
+      },
+      "discovery_confirm": {
+        "title": "Discovered: {name}",
+        "description": "Set up the Naim device {name} at {host}?"
+      },
+      "reconfigure": {
+        "title": "Change Naim host",
+        "description": "Enter the new IP address. It must be the same Naim device.",
+        "data": {
+          "ip_address": "IP Address (e.g., 192.168.1.127)"
+        }
       }
     },
     "error": {
@@ -26,10 +37,15 @@
       "timeout": "Connection timed out",
       "already_configured": "This Naim device is already configured",
       "invalid_entity_id": "Invalid entity ID",
-      "invalid_volume_step": "Volume step must be between 1 and 20"
+      "invalid_volume_step": "Volume step must be between 1 and 20",
+      "invalid_ip_address": "Enter a valid IPv4 or IPv6 address"
     },
     "abort": {
-      "already_configured": "This Naim device is already configured"
+      "already_configured": "This Naim device is already configured",
+      "not_naim_device": "This service was not announced by a Naim device.",
+      "no_serial": "The device serial number could not be read, so the device cannot be identified.",
+      "wrong_device": "The device at that address is not the same Naim device.",
+      "reconfigure_successful": "The Naim host was updated and the device is reloading."
     }
   },
   "options": {
@@ -39,7 +55,8 @@
         "description": "Select which input sources to show for {device_name}.",
         "data": {
           "sources": "Available Sources",
-          "volume_step": "Volume Step % (1–20)"
+          "volume_step": "Volume Step % (1–20)",
+          "max_volume": "Maximum volume % (1–100)"
         }
       }
     },

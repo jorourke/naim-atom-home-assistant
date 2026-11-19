@@ -23,15 +23,18 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .client import parse_inputs
 from .const import (
+    CONF_MAX_VOLUME,
     CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
     DEFAULT_ENTITY_ID,
     DEFAULT_HTTP_PORT,
     DEFAULT_IP,
+    DEFAULT_MAX_VOLUME,
     DEFAULT_NAME,
     DEFAULT_VOLUME_STEP,
     DOMAIN,
@@ -44,6 +47,8 @@ _LOGGER = logging.getLogger(__name__)
 # fractional input server-side.
 VOLUME_STEP_SELECTOR = NumberSelector(NumberSelectorConfig(min=1, max=20, step=1, mode=NumberSelectorMode.BOX))
 
+MAX_VOLUME_SELECTOR = NumberSelector(NumberSelectorConfig(min=1, max=100, step=1, mode=NumberSelectorMode.BOX))
+
 # Note: IP validation is done manually after form submission because custom
 # validator functions cannot be serialized for the frontend.
 USER_SCHEMA = vol.Schema(
@@ -54,6 +59,11 @@ USER_SCHEMA = vol.Schema(
         vol.Required(CONF_VOLUME_STEP, default=DEFAULT_VOLUME_STEP): vol.All(VOLUME_STEP_SELECTOR, vol.Coerce(int)),
     }
 )
+
+
+def _get_max_volume(config_entry: config_entries.ConfigEntry) -> int:
+    """Return the configured maximum volume (defaults to 100, which changes nothing)."""
+    return config_entry.options.get(CONF_MAX_VOLUME, DEFAULT_MAX_VOLUME)
 
 
 def _get_volume_step(config_entry: config_entries.ConfigEntry) -> int:
@@ -208,12 +218,78 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if serial:
             self._user_input[CONF_SERIAL] = serial
 
-        # If we discovered sources, show the selection step
+        return await self._async_select_sources_or_create()
+
+    async def _async_select_sources_or_create(self) -> "FlowResult":
+        """Show source selection if inputs were discovered; otherwise create the entry (hardcoded fallback)."""
         if self._available_sources:
             return await self.async_step_sources()
+        return self.async_create_entry(title=self._user_input[CONF_NAME], data=self._user_input)
 
-        # Otherwise, create the entry without source selection (fallback to hardcoded)
-        return self.async_create_entry(title=validated_input[CONF_NAME], data=validated_input)
+    async def async_step_zeroconf(self, discovery_info: ZeroconfServiceInfo) -> "FlowResult":
+        """Handle a `_sues800device._tcp` service announced by a Naim device."""
+        if not str(discovery_info.properties.get("manufacturer", "")).lower().startswith("naim"):
+            return self.async_abort(reason="not_naim_device")
+
+        host = discovery_info.host
+        # Same legacy check as the user flow: an entry stored against this IP is this device.
+        if any(entry.data.get(CONF_IP_ADDRESS) == host for entry in self._async_current_entries()):
+            return self.async_abort(reason="already_configured")
+
+        serial = await async_get_device_serial(self.hass, host)
+        if not serial:
+            return self.async_abort(reason="no_serial")
+
+        await self.async_set_unique_id(serial)
+        # If the device is known but moved to a new IP, follow it (this also reloads the entry).
+        self._abort_if_unique_id_configured(updates={CONF_IP_ADDRESS: host})
+
+        name = discovery_info.properties.get("name") or DEFAULT_NAME
+        self._user_input = {
+            CONF_IP_ADDRESS: host,
+            CONF_NAME: name,
+            "entity_id": DEFAULT_ENTITY_ID,
+            CONF_VOLUME_STEP: DEFAULT_VOLUME_STEP,
+            CONF_SERIAL: serial,
+        }
+        self.context["title_placeholders"] = {"name": name}
+        return await self.async_step_discovery_confirm()
+
+    async def async_step_discovery_confirm(self, user_input: dict[str, Any] | None = None) -> "FlowResult":
+        """Confirm the discovered device, then run the same source selection as manual setup."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="discovery_confirm",
+                description_placeholders={
+                    "name": self._user_input[CONF_NAME],
+                    "host": self._user_input[CONF_IP_ADDRESS],
+                },
+            )
+        self._available_sources = await async_get_available_inputs(self.hass, self._user_input[CONF_IP_ADDRESS]) or {}
+        return await self._async_select_sources_or_create()
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> "FlowResult":
+        """Change the device host, after checking the new host is the same device."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            host = user_input[CONF_IP_ADDRESS]
+            if not valid_ip_address(host):
+                errors[CONF_IP_ADDRESS] = "invalid_ip_address"
+            elif not (serial := await async_get_device_serial(self.hass, host)):
+                errors["base"] = "cannot_connect"
+            elif not entry.data.get(CONF_SERIAL):
+                return self.async_abort(reason="no_serial")
+            elif serial != entry.data[CONF_SERIAL]:
+                return self.async_abort(reason="wrong_device")
+            else:
+                return self.async_update_reload_and_abort(entry, data_updates={CONF_IP_ADDRESS: host})
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({vol.Required(CONF_IP_ADDRESS, default=entry.data[CONF_IP_ADDRESS]): str}),
+            errors=errors,
+        )
 
     async def async_step_sources(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the source selection step."""
@@ -285,6 +361,7 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             data = {
                 CONF_VOLUME_STEP: int(user_input.get(CONF_VOLUME_STEP, _get_volume_step(self._config_entry))),
+                CONF_MAX_VOLUME: int(user_input.get(CONF_MAX_VOLUME, _get_max_volume(self._config_entry))),
             }
 
             if device_reachable:
@@ -321,6 +398,9 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
 
         schema_dict[vol.Required(CONF_VOLUME_STEP, default=current_volume_step)] = vol.All(
             VOLUME_STEP_SELECTOR, vol.Coerce(int)
+        )
+        schema_dict[vol.Required(CONF_MAX_VOLUME, default=_get_max_volume(self._config_entry))] = vol.All(
+            MAX_VOLUME_SELECTOR, vol.Coerce(int)
         )
 
         return self.async_show_form(

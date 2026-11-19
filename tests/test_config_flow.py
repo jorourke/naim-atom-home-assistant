@@ -20,6 +20,7 @@ from custom_components.naim_media_player.config_flow import (
     async_get_device_serial,
 )
 from custom_components.naim_media_player.const import (
+    CONF_MAX_VOLUME,
     CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
@@ -835,6 +836,7 @@ async def test_options_flow_submit(hass: HomeAssistant) -> None:
     assert result["data"] == {
         CONF_SOURCES: {"Spotify": "spotify", "Digital 1": "dig1"},
         CONF_VOLUME_STEP: 5,
+        CONF_MAX_VOLUME: 100,
     }
 
 
@@ -873,6 +875,7 @@ async def test_options_flow_volume_step_when_unreachable(hass: HomeAssistant) ->
     assert result["data"] == {
         CONF_SOURCES: {"Analog 1": "ana1"},
         CONF_VOLUME_STEP: 7,
+        CONF_MAX_VOLUME: 100,
     }
 
 
@@ -951,3 +954,259 @@ async def test_get_options_flow_handler(hass: HomeAssistant) -> None:
 
     flow = NaimConfigFlow.async_get_options_flow(entry)
     assert isinstance(flow, NaimOptionsFlow)
+
+
+# --- Options: max volume ---
+
+
+async def test_options_flow_saves_max_volume(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_IP_ADDRESS: "192.168.1.100", CONF_SOURCES: {"Analog 1": "ana1"}})
+    with patch("custom_components.naim_media_player.config_flow.async_get_available_inputs", return_value=None):
+        flow = NaimOptionsFlow(entry)
+        flow.hass = hass
+        form = await flow.async_step_init()
+        default = next(k.default() for k in form["data_schema"].schema if str(k) == CONF_MAX_VOLUME)
+        assert default == 100
+        result = await flow.async_step_init({CONF_VOLUME_STEP: 5, CONF_MAX_VOLUME: 40})
+    assert result["data"][CONF_MAX_VOLUME] == 40
+
+
+async def test_options_flow_max_volume_default_follows_saved_option(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_IP_ADDRESS: "192.168.1.100"}, options={CONF_MAX_VOLUME: 55})
+    with patch("custom_components.naim_media_player.config_flow.async_get_available_inputs", return_value=None):
+        flow = NaimOptionsFlow(entry)
+        flow.hass = hass
+        form = await flow.async_step_init()
+    assert next(k.default() for k in form["data_schema"].schema if str(k) == CONF_MAX_VOLUME) == 55
+
+
+# --- Zeroconf discovery (TXT record captured from a real Atom with dns-sd) ---
+
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo  # noqa: E402
+
+FLOW = "custom_components.naim_media_player.config_flow"
+ATOM_SERIAL = "521103"
+
+
+def _discovery(host="192.168.1.127", **props):
+    properties = {
+        "uuid": "np800-693ad3b7-474f-4c7d-afbe-1ee4d174dc8c",
+        "manufacturer": "Naim Audio",
+        "serial": ATOM_SERIAL,
+        "model": "Uniti Atom",
+        "usage": "streamer",
+        "name": "jAtom",
+        "ip": host,
+        **props,
+    }
+    import ipaddress
+
+    return ZeroconfServiceInfo(
+        ip_address=ipaddress.ip_address(host),
+        ip_addresses=[ipaddress.ip_address(host)],
+        port=80,
+        hostname="Uniti-Atom-521103.local.",
+        type="_sues800device._tcp.local.",
+        name="np800-693ad3b7-474f-4c7d-afbe-1ee4d174dc8c._sues800device._tcp.local.",
+        properties=properties,
+    )
+
+
+async def _start_discovery(hass, info=None, serial=ATOM_SERIAL, sources=None):
+    with (
+        patch(f"{FLOW}.async_get_device_serial", return_value=serial),
+        patch(f"{FLOW}.async_get_available_inputs", return_value=sources),
+    ):
+        return await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info or _discovery()
+        )
+
+
+def test_manifest_declares_naim_zeroconf_matcher() -> None:
+    import json
+    from pathlib import Path
+
+    manifest = json.loads(Path("custom_components/naim_media_player/manifest.json").read_text())
+    assert manifest["zeroconf"] == [{"type": "_sues800device._tcp.local.", "properties": {"manufacturer": "naim*"}}]
+    assert manifest["requirements"] == []
+
+
+async def test_zeroconf_discovery_runs_source_selection_and_creates_entry(hass: HomeAssistant) -> None:
+    sources = {"Turntable": "ana1", "Spotify": "spotify"}
+    result = await _start_discovery(hass, sources=sources)
+    assert result["type"] == "form"
+    assert result["step_id"] == "discovery_confirm"
+
+    with (
+        patch(f"{FLOW}.async_get_device_serial", return_value=ATOM_SERIAL),
+        patch(f"{FLOW}.async_get_available_inputs", return_value=sources),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] == "form"
+    assert result["step_id"] == "sources"
+
+    with patch("custom_components.naim_media_player.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_SOURCES: ["Spotify"]})
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_IP_ADDRESS] == "192.168.1.127"
+    assert result["data"][CONF_SERIAL] == ATOM_SERIAL
+    assert result["data"][CONF_SOURCES] == {"Spotify": "spotify"}
+    assert result["result"].unique_id == ATOM_SERIAL
+
+
+async def test_zeroconf_discovery_without_inputs_creates_entry_directly(hass: HomeAssistant) -> None:
+    result = await _start_discovery(hass, sources=None)
+    with (
+        patch(f"{FLOW}.async_get_device_serial", return_value=ATOM_SERIAL),
+        patch(f"{FLOW}.async_get_available_inputs", return_value=None),
+        patch("custom_components.naim_media_player.async_setup_entry", return_value=True),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] == "create_entry"
+    assert CONF_SOURCES not in result["data"]
+
+
+async def test_zeroconf_already_configured_same_ip_aborts(hass: HomeAssistant) -> None:
+    MockConfigEntry(
+        domain=DOMAIN, unique_id=ATOM_SERIAL, data={CONF_IP_ADDRESS: "192.168.1.127", CONF_SERIAL: ATOM_SERIAL}
+    ).add_to_hass(hass)
+    result = await _start_discovery(hass)
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+
+
+async def test_zeroconf_new_ip_updates_same_entry_without_second_entry(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=ATOM_SERIAL, data={CONF_IP_ADDRESS: "192.168.1.50", CONF_SERIAL: ATOM_SERIAL}
+    )
+    entry.add_to_hass(hass)
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await _start_discovery(hass)
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_IP_ADDRESS] == "192.168.1.127"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+    # Not loaded in this test; HA reloads loaded entries on update, and the update listener does too.
+    assert reload.call_count <= 1
+
+
+async def test_zeroconf_legacy_ip_keyed_entry_is_already_configured(hass: HomeAssistant) -> None:
+    MockConfigEntry(domain=DOMAIN, unique_id="192.168.1.127", data={CONF_IP_ADDRESS: "192.168.1.127"}).add_to_hass(hass)
+    result = await _start_discovery(hass)
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+
+
+async def test_zeroconf_non_naim_manufacturer_aborts(hass: HomeAssistant) -> None:
+    result = await _start_discovery(hass, info=_discovery(manufacturer="Acme Audio"))
+    assert result["type"] == "abort"
+    assert result["reason"] == "not_naim_device"
+
+
+async def test_zeroconf_missing_manufacturer_aborts(hass: HomeAssistant) -> None:
+    info = _discovery()
+    del info.properties["manufacturer"]
+    result = await _start_discovery(hass, info=info)
+    assert result["reason"] == "not_naim_device"
+
+
+async def test_zeroconf_without_resolvable_serial_aborts(hass: HomeAssistant) -> None:
+    result = await _start_discovery(hass, serial=None)
+    assert result["type"] == "abort"
+    assert result["reason"] == "no_serial"
+
+
+async def test_zeroconf_and_user_flow_share_unique_id(hass: HomeAssistant) -> None:
+    result = await _start_discovery(hass)
+    with (
+        patch(f"{FLOW}.async_get_device_serial", return_value=ATOM_SERIAL),
+        patch(f"{FLOW}.async_get_available_inputs", return_value=None),
+        patch("custom_components.naim_media_player.async_setup_entry", return_value=True),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        entry = result["result"]
+        from custom_components.naim_media_player.media_player import NaimPlayer
+
+        player = NaimPlayer(
+            hass, "x", entry.data[CONF_IP_ADDRESS], serial=entry.data[CONF_SERIAL], unique_id=entry.unique_id
+        )
+        assert player.unique_id == entry.unique_id == ATOM_SERIAL
+
+        # The user flow for the same device recognises it as the same identity.
+        flow = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        with patch(f"{FLOW}.NaimConfigFlow._test_connection", new=AsyncMock()):
+            done = await hass.config_entries.flow.async_configure(
+                flow["flow_id"],
+                {CONF_IP_ADDRESS: "192.168.1.200", CONF_NAME: "x", "entity_id": "x", CONF_VOLUME_STEP: 5},
+            )
+    assert done["type"] == "abort"
+    assert done["reason"] == "already_configured"
+
+
+# --- Reconfigure ---
+
+
+def _reconfigure_entry(hass, serial=ATOM_SERIAL):
+    data = {CONF_IP_ADDRESS: "192.168.1.127", CONF_NAME: "Atom", CONF_SOURCES: {"Spotify": "spotify"}}
+    if serial:
+        data[CONF_SERIAL] = serial
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=serial or "192.168.1.127", data=data)
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def _reconfigure(hass, entry, host, serial):
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] == "form"
+    assert result["step_id"] == "reconfigure"
+    with patch(f"{FLOW}.async_get_device_serial", return_value=serial):
+        return await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_IP_ADDRESS: host})
+
+
+async def test_reconfigure_same_device_new_host_updates_and_reloads(hass: HomeAssistant) -> None:
+    entry = _reconfigure_entry(hass)
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await _reconfigure(hass, entry, "192.168.1.60", ATOM_SERIAL)
+    assert result["type"] == "abort"
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_IP_ADDRESS] == "192.168.1.60"
+    assert entry.data[CONF_SOURCES] == {"Spotify": "spotify"}
+    assert entry.unique_id == ATOM_SERIAL
+    reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_reconfigure_same_host_succeeds(hass: HomeAssistant) -> None:
+    entry = _reconfigure_entry(hass)
+    result = await _reconfigure(hass, entry, "192.168.1.127", ATOM_SERIAL)
+    assert result["reason"] == "reconfigure_successful"
+
+
+async def test_reconfigure_different_device_aborts_and_leaves_entry_unchanged(hass: HomeAssistant) -> None:
+    entry = _reconfigure_entry(hass)
+    before = dict(entry.data)
+    result = await _reconfigure(hass, entry, "192.168.1.61", "999999")
+    assert result["type"] == "abort"
+    assert result["reason"] == "wrong_device"
+    assert dict(entry.data) == before
+
+
+async def test_reconfigure_unreachable_host_shows_error(hass: HomeAssistant) -> None:
+    entry = _reconfigure_entry(hass)
+    result = await _reconfigure(hass, entry, "192.168.1.62", None)
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert entry.data[CONF_IP_ADDRESS] == "192.168.1.127"
+
+
+async def test_reconfigure_invalid_ip_shows_error(hass: HomeAssistant) -> None:
+    entry = _reconfigure_entry(hass)
+    result = await _reconfigure(hass, entry, "not-an-ip", ATOM_SERIAL)
+    assert result["errors"] == {CONF_IP_ADDRESS: "invalid_ip_address"}
+
+
+async def test_reconfigure_entry_without_serial_cannot_verify(hass: HomeAssistant) -> None:
+    entry = _reconfigure_entry(hass, serial=None)
+    result = await _reconfigure(hass, entry, "192.168.1.63", ATOM_SERIAL)
+    assert result["type"] == "abort"
+    assert result["reason"] == "no_serial"
+    assert entry.data[CONF_IP_ADDRESS] == "192.168.1.127"
