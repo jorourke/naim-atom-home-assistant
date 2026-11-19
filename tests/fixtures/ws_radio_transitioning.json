@@ -1,0 +1,110 @@
+{
+  "data": {
+    "contextPath": "",
+    "controls": {
+      "next_": true,
+      "playMode": {
+        "repeatAll": false,
+        "repeatOne": false,
+        "shuffle": false,
+        "shuffleRepeatAll": false,
+        "shuffleRepeatOne": false
+      },
+      "previous": true,
+      "seekBytes": false,
+      "seekTime": false,
+      "seekTrack": true
+    },
+    "error": "",
+    "matchingMediaRoles": [
+      {
+        "path": "vtuner:P1N0YXJ0VGltZT0wJml0ZW1CaXRyYXRlPTMyMCZpdGVtQm9va21hcms9aHR0cDovL25haW0udnR1bmVyLmNvbS9zZXR1cGFwcC9uYWltL2FzcC9icm93c2V4cGEvQWRkRmF2LmFzcD9lbXB0eSUzRCUyNlN0YXRpb25JRCUzRDgwNjEyJml0ZW1HZW5yZT1WYXJpZXR5Jml0ZW1Mb2NhdGlvbj1Vbml0ZWQlMjBLaW5nZG9tJml0ZW1Mb2dvPWh0dHA6Ly9uYWltLnZ0dW5lci5jb20vc2V0dXBhcHAvbmFpbS9pbWFnZXMvc3RhdGlvbnN0L05haW1SYWRpby5wbmc/diUzRDEmaXRlbU5hbWU9TmFpbSUyMFJhZGlvJml0ZW1UeXBlPVN0YXRpb24maXRlbVVybD1odHRwOi8vbXNjcDMubGl2ZS1zdHJlYW1zLm5sOjgzNjAvaGlnaC5hYWM"
+      }
+    ],
+    "mediaRoles": {
+      "audioType": "audioBroadcast",
+      "containerPlayable": true,
+      "icon": "http://naim.vtuner.com/setupapp/naim/images/stationst/NaimRadio.png?v=1",
+      "isPreset": false,
+      "mediaData": {
+        "metaData": {
+          "allowSeekTime": false,
+          "alternativeStreams": true,
+          "comment": "",
+          "country": "United Kingdom",
+          "genre": "Variety",
+          "likeItPath": "vtuner:P2l0ZW1CaXRyYXRlPTMyMCZpdGVtQm9va21hcms9aHR0cDovL25haW0udnR1bmVyLmNvbS9zZXR1cGFwcC9uYWltL2FzcC9icm93c2V4cGEvQWRkRmF2LmFzcD9lbXB0eSUzRCUyNlN0YXRpb25JRCUzRDgwNjEyJml0ZW1HZW5yZT1WYXJpZXR5Jml0ZW1Mb2NhdGlvbj1Vbml0ZWQlMjBLaW5nZG9tJml0ZW1Mb2dvPWh0dHA6Ly9uYWltLnZ0dW5lci5jb20vc2V0dXBhcHAvbmFpbS9pbWFnZXMvc3RhdGlvbnN0L05haW1SYWRpby5wbmc/diUzRDEmaXRlbU5hbWU9TmFpbSUyMFJhZGlvJml0ZW1UeXBlPVN0YXRpb24maXRlbVVybD1odHRwOi8vbXNjcDMubGl2ZS1zdHJlYW1zLm5sOjgzNjAvaGlnaC5hYWM",
+          "live": true,
+          "serviceID": "VTuner",
+          "stationTitle": "Naim Radio"
+        },
+        "resources": [
+          {
+            "bitRate": 320000,
+            "mimeType": "audio/unknown",
+            "uri": "http://mscp3.live-streams.nl:8360/high.aac",
+            "userAgent": "NP800-Uniti"
+          }
+        ]
+      },
+      "path": "vtuner:P1N0YXJ0VGltZT0wJml0ZW1CaXRyYXRlPTMyMCZpdGVtQm9va21hcms9aHR0cDovL25haW0udnR1bmVyLmNvbS9zZXR1cGFwcC9uYWltL2FzcC9icm93c2V4cGEvQWRkRmF2LmFzcD9lbXB0eSUzRCUyNlN0YXRpb25JRCUzRDgwNjEyJml0ZW1HZW5yZT1WYXJpZXR5Jml0ZW1Mb2NhdGlvbj1Vbml0ZWQlMjBLaW5nZG9tJml0ZW1Mb2dvPWh0dHA6Ly9uYWltLnZ0dW5lci5jb20vc2V0dXBhcHAvbmFpbS9pbWFnZXMvc3RhdGlvbnN0L05haW1SYWRpby5wbmc/diUzRDEmaXRlbU5hbWU9TmFpbSUyMFJhZGlvJml0ZW1UeXBlPVN0YXRpb24maXRlbVVybD1odHRwOi8vbXNjcDMubGl2ZS1zdHJlYW1zLm5sOjgzNjAvaGlnaC5hYWM",
+      "title": "Naim Radio",
+      "type": "audio"
+    },
+    "playId": {
+      "systemMemberId": "np800-693ad3b7-474f-4c7d-afbe-1ee4d174dc8c",
+      "timestamp": 1365552118
+    },
+    "ratingPath": "",
+    "state": "transitioning",
+    "streamId": 62,
+    "trackRoles": {
+      "audioType": "audioBroadcast",
+      "containerPlayable": true,
+      "icon": "http://naim.vtuner.com/setupapp/naim/images/stationst/NaimRadio.png?v=1",
+      "isPreset": false,
+      "mediaData": {
+        "activeResource": {
+          "bitRate": 320000,
+          "mimeType": "audio/unknown",
+          "uri": "http://mscp3.live-streams.nl:8360/high.aac",
+          "userAgent": "NP800-Uniti"
+        },
+        "metaData": {
+          "allowSeekTime": false,
+          "alternativeStreams": true,
+          "comment": "",
+          "country": "United Kingdom",
+          "genre": "Variety",
+          "likeItPath": "vtuner:P2l0ZW1CaXRyYXRlPTMyMCZpdGVtQm9va21hcms9aHR0cDovL25haW0udnR1bmVyLmNvbS9zZXR1cGFwcC9uYWltL2FzcC9icm93c2V4cGEvQWRkRmF2LmFzcD9lbXB0eSUzRCUyNlN0YXRpb25JRCUzRDgwNjEyJml0ZW1HZW5yZT1WYXJpZXR5Jml0ZW1Mb2NhdGlvbj1Vbml0ZWQlMjBLaW5nZG9tJml0ZW1Mb2dvPWh0dHA6Ly9uYWltLnZ0dW5lci5jb20vc2V0dXBhcHAvbmFpbS9pbWFnZXMvc3RhdGlvbnN0L05haW1SYWRpby5wbmc/diUzRDEmaXRlbU5hbWU9TmFpbSUyMFJhZGlvJml0ZW1UeXBlPVN0YXRpb24maXRlbVVybD1odHRwOi8vbXNjcDMubGl2ZS1zdHJlYW1zLm5sOjgzNjAvaGlnaC5hYWM",
+          "live": true,
+          "serviceID": "VTuner",
+          "stationTitle": "Naim Radio"
+        },
+        "resources": [
+          {
+            "bitRate": 320000,
+            "mimeType": "audio/unknown",
+            "uri": "http://mscp3.live-streams.nl:8360/high.aac",
+            "userAgent": "NP800-Uniti"
+          }
+        ]
+      },
+      "path": "vtuner:P1N0YXJ0VGltZT0wJml0ZW1CaXRyYXRlPTMyMCZpdGVtQm9va21hcms9aHR0cDovL25haW0udnR1bmVyLmNvbS9zZXR1cGFwcC9uYWltL2FzcC9icm93c2V4cGEvQWRkRmF2LmFzcD9lbXB0eSUzRCUyNlN0YXRpb25JRCUzRDgwNjEyJml0ZW1HZW5yZT1WYXJpZXR5Jml0ZW1Mb2NhdGlvbj1Vbml0ZWQlMjBLaW5nZG9tJml0ZW1Mb2dvPWh0dHA6Ly9uYWltLnZ0dW5lci5jb20vc2V0dXBhcHAvbmFpbS9pbWFnZXMvc3RhdGlvbnN0L05haW1SYWRpby5wbmc/diUzRDEmaXRlbU5hbWU9TmFpbSUyMFJhZGlvJml0ZW1UeXBlPVN0YXRpb24maXRlbVVybD1odHRwOi8vbXNjcDMubGl2ZS1zdHJlYW1zLm5sOjgzNjAvaGlnaC5hYWM",
+      "persistentMetaData": false,
+      "title": "Naim Radio",
+      "type": "audio"
+    }
+  },
+  "playTime": {
+    "i64_": -1,
+    "type": "i64_"
+  },
+  "sender": "np800-693ad3b7-474f-4c7d-afbe-1ee4d174dc8c",
+  "senderMute": {},
+  "senderVolume": {
+    "i32_": 50,
+    "type": "i32_"
+  },
+  "senderVolumeBase": {}
+}

@@ -1,0 +1,12 @@
+{
+  "balance": "0",
+  "changestamp": "0",
+  "class": "object.levels",
+  "cpu": "181",
+  "headphoneDetect": "0",
+  "mute": "0",
+  "name": "room",
+  "ussi": "levels/room",
+  "version": "1.4.0",
+  "volume": "60"
+}

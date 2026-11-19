@@ -28,6 +28,67 @@ def _ms_to_seconds(value: Any) -> float | None:
         return None
 
 
+# /nowplaying restrict* flag -> control it removes. The device reports 128 when the source
+# cannot do something (radio: pause, seek, skip). Other values are transient state, e.g.
+# restrictPause is 1 while already paused, so only the 128 bit counts as a restriction.
+RESTRICT_FLAGS = {
+    "restrictPause": "pause",
+    "restrictSeek": "seek",
+    "restrictSkipNext": "next",
+    "restrictSkipPrev": "previous",
+}
+RESTRICTED_BIT = 128
+
+# /nowplaying audio format field -> (state key, is numeric)
+AUDIO_FORMAT_FIELDS = {
+    "codec": ("codec", False),
+    "sampleRate": ("sample_rate", True),
+    "bitDepth": ("bit_depth", True),
+    "bitRate": ("bit_rate", True),
+    "channels": ("channels", True),
+}
+
+
+def _restrictions(nowplaying: dict[str, Any]) -> frozenset[str]:
+    """Return the controls the current source cannot do. Missing flags restrict nothing."""
+    restricted = set()
+    for flag, control in RESTRICT_FLAGS.items():
+        try:
+            if int(nowplaying.get(flag)) & RESTRICTED_BIT:
+                restricted.add(control)
+        except (TypeError, ValueError):
+            pass
+    return frozenset(restricted)
+
+
+def _audio_format(nowplaying: dict[str, Any]) -> dict[str, str | int]:
+    """Return the audio format fields the device sent, leaving out missing, null or zero ones."""
+    result: dict[str, str | int] = {}
+    for field, (key, numeric) in AUDIO_FORMAT_FIELDS.items():
+        value = nowplaying.get(field)
+        if numeric:
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                continue
+        if value:
+            result[key] = value
+    return result
+
+
+def parse_inputs(data: dict[str, Any]) -> dict[str, str]:
+    """Map display name (alias, else name) to input ID for the selectable inputs in /inputs."""
+    sources = {}
+    for child in data.get("children", []):
+        if child.get("selectable") == "1":
+            name = child.get("alias") or child.get("name")
+            ussi = child.get("ussi", "")
+            input_id = ussi.split("/")[-1] if "/" in ussi else ussi
+            if name and input_id:
+                sources[name] = input_id
+    return sources
+
+
 class NaimClient:
     """Consolidated HTTP API and WebSocket client for Naim devices."""
 
@@ -106,6 +167,27 @@ class NaimClient:
         """Seek the current track. The device takes milliseconds."""
         await self.send_command("nowplaying", "seek", position=position_ms)
 
+    async def get_inputs(self) -> dict[str, str] | None:
+        """Return the device's selectable inputs (name -> input ID), or None if unavailable."""
+        data = await self._get_json_safe("inputs", single_attempt=True)
+        return None if data is None else parse_inputs(data)
+
+    async def get_radio_favourites(self) -> list[dict[str, str]]:
+        """Return saved radio favourites, or an empty list if the device has none or fails."""
+        data = await self._get_json_safe("inputs/radio/favourites", single_attempt=True)
+        children = data.get("children") if isinstance(data, dict) else None
+        if not isinstance(children, list):
+            return []
+        return [
+            {"name": child.get("name") or child["ussi"], "id": child["ussi"], "image": child.get("artwork")}
+            for child in children
+            if isinstance(child, dict) and child.get("ussi")
+        ]
+
+    async def play_radio_item(self, ussi: str) -> None:
+        """Start a radio station or favourite by its device path."""
+        await self.send_command(ussi, "play")
+
     async def poll_state(self) -> None:
         """Fetch full device state via HTTP and write it to state.
 
@@ -145,6 +227,8 @@ class NaimClient:
             "duration": _ms_to_seconds(nowplaying.get("duration")),
             "position": _ms_to_seconds(nowplaying.get("transportPosition")),
             "image_url": nowplaying.get("artwork"),
+            "restrictions": _restrictions(nowplaying),
+            "audio_format": _audio_format(nowplaying),
         }
 
         # Passive inputs (Analogue, etc.) have no real track metadata, and the

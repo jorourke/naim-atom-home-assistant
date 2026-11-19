@@ -1,0 +1,10 @@
+{
+  "artwork": "http://radioeu.naimaudio.com:8089/api/img/dir/Favourites.jpg",
+  "changestamp": "0",
+  "class": "object.presets.radio",
+  "cpu": "7233",
+  "name": "Favourites",
+  "totalCount": "0",
+  "ussi": "inputs/radio/favourites",
+  "version": "1.4.0"
+}

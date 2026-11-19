@@ -727,3 +727,201 @@ async def test_seek(hass, state):
     with aioresponses() as mock:
         mock.get("http://192.168.1.100:15081/nowplaying?cmd=seek&position=109568", payload={})
         await client.seek(109568)
+
+
+# ---- Capability flags, audio format, buffering, inputs, favourites (payloads captured from a real Atom) ----
+
+BASE = "http://192.168.1.100:15081"
+
+
+def _mock_poll(mock, nowplaying, power="power_on"):
+    from tests.helpers import fx
+
+    mock.get(f"{BASE}/power", payload=fx(power))
+    mock.get(f"{BASE}/nowplaying", payload=nowplaying)
+    mock.get(f"{BASE}/levels/room", payload=fx("levels_room"))
+
+
+async def test_poll_radio_restrictions_audio_format_and_buffering(hass, state):
+    """Radio reports 128 on pause/seek/skip; transportState 8 is buffering."""
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_radio_buffering"))
+        await client.poll_state()
+    assert state.playing_state == MediaPlayerState.BUFFERING
+    assert state.restrictions == frozenset({"pause", "seek", "next", "previous"})
+
+
+async def test_poll_radio_playing_audio_format(hass, state):
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_radio_playing"))
+        await client.poll_state()
+    assert state.playing_state == MediaPlayerState.PLAYING
+    assert state.audio_format == {
+        "codec": "AAC",
+        "sample_rate": 44100,
+        "bit_depth": 32,
+        "bit_rate": 126431,
+        "channels": 2,
+    }
+
+
+async def test_poll_unrestricted_source_clears_restrictions(hass, state):
+    """Spotify reports restrictPause 0 etc., so a flag that clears brings the feature back."""
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_radio_playing"))
+        await client.poll_state()
+        assert "seek" in state.restrictions
+        _mock_poll(mock, fx("nowplaying_spotify"))
+        await client.poll_state()
+    assert state.restrictions == frozenset()
+    assert state.audio_format == {"codec": "FLAC", "bit_rate": 988156}
+
+
+async def test_poll_analogue_audio_format(hass, state):
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_ana1"))
+        await client.poll_state()
+    assert state.audio_format == {"sample_rate": 48000, "bit_depth": 16, "bit_rate": 1536000, "channels": 2}
+
+
+async def test_poll_pause_state_flag_is_not_a_restriction(hass, state):
+    """Live device: restrictPause becomes 1 while paused (state, not a source restriction)."""
+    from tests.helpers import fx
+
+    payload = {**fx("nowplaying_spotify"), "restrictPause": "1", "restrictResume": "0", "transportState": "3"}
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, payload)
+        await client.poll_state()
+    assert state.restrictions == frozenset()
+    assert state.playing_state == MediaPlayerState.PAUSED
+
+
+async def test_poll_missing_or_null_fields_never_raise(hass, state):
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    junk = {
+        "transportState": "2",
+        "restrictSeek": None,
+        "restrictPause": "abc",
+        "codec": None,
+        "sampleRate": "x",
+        "bitRate": "0",
+    }
+    with aioresponses() as mock:
+        _mock_poll(mock, junk)
+        await client.poll_state()
+    assert state.restrictions == frozenset()
+    assert state.audio_format == {}
+
+
+async def test_websocket_transitioning_is_buffering(hass, state):
+    import json
+
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    await client._handle_message(json.dumps(fx("ws_radio_transitioning")))
+    assert state.playing_state == MediaPlayerState.BUFFERING
+
+
+async def test_poll_and_websocket_agree_on_buffering_without_flip_flop(hass, state):
+    """Same device condition (radio connecting) gives the same value on both channels."""
+    import json
+
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_radio_buffering"))
+        await client.poll_state()
+        assert await state.update(source="websocket", playing_state=state.playing_state) is False
+        await client._handle_message(json.dumps(fx("ws_radio_transitioning")))
+        assert state.playing_state == MediaPlayerState.BUFFERING
+        _mock_poll(mock, fx("nowplaying_radio_buffering"))
+        await client.poll_state()
+    assert state.playing_state == MediaPlayerState.BUFFERING
+
+
+async def test_websocket_never_writes_restrictions_or_audio_format(hass, state):
+    """The WebSocket says next_ is true on radio while HTTP says restricted; the poll owns these."""
+    import json
+
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_radio_playing"))
+        await client.poll_state()
+    before = (state.restrictions, dict(state.audio_format))
+    await client._handle_message(json.dumps(fx("ws_radio_transitioning")))
+    assert (state.restrictions, state.audio_format) == before
+
+
+async def test_get_inputs_maps_alias_over_name(hass, state):
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get(f"{BASE}/inputs", payload=fx("inputs"))
+        inputs = await client.get_inputs()
+    assert inputs["Turntable"] == "ana1"
+    assert inputs["HDMI"] == "hdmi"
+    assert "Multi-room" not in inputs
+
+
+async def test_get_inputs_failure_returns_none(hass, state):
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get(f"{BASE}/inputs", status=500)
+        assert await client.get_inputs() is None
+
+
+async def test_get_radio_favourites_empty_from_real_device(hass, state):
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get(f"{BASE}/inputs/radio/favourites", payload=fx("favourites_empty"))
+        assert await client.get_radio_favourites() == []
+
+
+async def test_get_radio_favourites_lists_children(hass, state):
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    payload = {
+        "children": [{"name": "Jazz", "ussi": "inputs/radio/favourites/1", "artwork": "http://x/a.png"}, {"ussi": ""}]
+    }
+    with aioresponses() as mock:
+        mock.get(f"{BASE}/inputs/radio/favourites", payload=payload)
+        favs = await client.get_radio_favourites()
+    assert favs == [{"name": "Jazz", "id": "inputs/radio/favourites/1", "image": "http://x/a.png"}]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"status": 404}, {"exception": asyncio.TimeoutError()}, {"body": "not json"}, {"payload": {"children": "x"}}],
+)
+async def test_get_radio_favourites_failures_return_empty(hass, state, kwargs):
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get(f"{BASE}/inputs/radio/favourites", **kwargs)
+        assert await client.get_radio_favourites() == []
+
+
+async def test_play_radio_item_sends_play(hass, state):
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        mock.get(f"{BASE}/inputs/radio/favourites/1?cmd=play", status=200, payload={})
+        await client.play_radio_item("inputs/radio/favourites/1")
+        mock.assert_called_once()

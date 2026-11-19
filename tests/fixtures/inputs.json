@@ -1,0 +1,166 @@
+{
+  "changestamp": "0",
+  "children": [
+    {
+      "alias": "Turntable",
+      "class": "object.input.analogue",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Analogue 1",
+      "selectable": "1",
+      "ussi": "inputs/ana1"
+    },
+    {
+      "alias": "",
+      "class": "object.input.digital",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Digital 1",
+      "selectable": "1",
+      "ussi": "inputs/dig1"
+    },
+    {
+      "alias": "",
+      "class": "object.input.digital",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Digital 2",
+      "selectable": "1",
+      "ussi": "inputs/dig2"
+    },
+    {
+      "alias": "",
+      "class": "object.input.digital",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Digital 3",
+      "selectable": "1",
+      "ussi": "inputs/dig3"
+    },
+    {
+      "alias": "",
+      "class": "object.input.hdmi",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "HDMI",
+      "selectable": "1",
+      "ussi": "inputs/hdmi"
+    },
+    {
+      "alias": "",
+      "class": "object.input.radio.internet",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Internet Radio",
+      "selectable": "1",
+      "ussi": "inputs/radio"
+    },
+    {
+      "class": "object.input.multiroom",
+      "multiroomMaster": "0",
+      "name": "Multi-room",
+      "selectable": "0",
+      "ussi": "inputs/multiroom"
+    },
+    {
+      "alias": "",
+      "class": "object.input.bluetooth",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Bluetooth",
+      "selectable": "1",
+      "ussi": "inputs/bluetooth"
+    },
+    {
+      "class": "object.input.airplay",
+      "disabled": "0",
+      "multiroomMaster": "0",
+      "name": "Airplay",
+      "selectable": "0",
+      "ussi": "inputs/airplay"
+    },
+    {
+      "class": "object.input.googlecast",
+      "multiroomMaster": "0",
+      "name": "Chromecast built-in",
+      "selectable": "0",
+      "ussi": "inputs/gcast"
+    },
+    {
+      "class": "object.input.spotify",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Spotify",
+      "selectable": "1",
+      "ussi": "inputs/spotify"
+    },
+    {
+      "class": "object.input.tidal",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "TIDAL",
+      "selectable": "0",
+      "ussi": "inputs/tidal"
+    },
+    {
+      "alias": "",
+      "class": "object.input.upnp",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Servers",
+      "selectable": "0",
+      "ussi": "inputs/upnp"
+    },
+    {
+      "class": "object.input.files",
+      "multiroomMaster": "1",
+      "name": "Demo Files",
+      "selectable": "0",
+      "ussi": "inputs/files"
+    },
+    {
+      "class": "object.input.playqueue",
+      "multiroomMaster": "1",
+      "name": "Playqueue",
+      "selectable": "1",
+      "ussi": "inputs/playqueue"
+    },
+    {
+      "alias": "",
+      "class": "object.input.usb",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "USB",
+      "selectable": "0",
+      "ussi": "inputs/usb"
+    },
+    {
+      "class": "object.input.qobuz",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Qobuz",
+      "selectable": "0",
+      "ussi": "inputs/qobuz"
+    },
+    {
+      "class": "object.input.qq",
+      "multiroomMaster": "1",
+      "name": "QQ",
+      "selectable": "0",
+      "ussi": "inputs/qq"
+    },
+    {
+      "class": "object.input.presto",
+      "disabled": "0",
+      "multiroomMaster": "1",
+      "name": "Presto",
+      "selectable": "0",
+      "ussi": "inputs/presto"
+    }
+  ],
+  "class": "object.inputs",
+  "cpu": "1361",
+  "name": "Inputs",
+  "ussi": "inputs",
+  "version": "1.4.0"
+}

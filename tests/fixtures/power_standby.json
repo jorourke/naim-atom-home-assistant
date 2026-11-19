@@ -1,0 +1,13 @@
+{
+  "changestamp": "0",
+  "class": "object.power",
+  "cpu": "123",
+  "name": "Power",
+  "powerMode": "0",
+  "serverMode": "0",
+  "standbyTimeout": "20",
+  "state": "lona",
+  "system": "lona",
+  "ussi": "power",
+  "version": "1.4.0"
+}

@@ -24,6 +24,7 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
 )
 
+from .client import parse_inputs
 from .const import (
     CONF_SERIAL,
     CONF_SOURCES,
@@ -102,18 +103,7 @@ async def async_get_available_inputs(hass, ip_address: str, port: int = DEFAULT_
     if data is None:
         return None
 
-    children = data.get("children", [])
-
-    # Filter to selectable inputs and build the map
-    sources = {}
-    for child in children:
-        if child.get("selectable") == "1":
-            name = child.get("alias") or child.get("name")
-            ussi = child.get("ussi", "")
-            # Extract input ID from ussi (e.g., "inputs/ana1" -> "ana1")
-            input_id = ussi.split("/")[-1] if "/" in ussi else ussi
-            if name and input_id:
-                sources[name] = input_id
+    sources = parse_inputs(data)
 
     _LOGGER.debug("Discovered %d selectable inputs: %s", len(sources), list(sources.keys()))
     return sources
