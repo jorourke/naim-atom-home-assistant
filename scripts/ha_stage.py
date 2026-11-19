@@ -22,7 +22,7 @@ DOMAIN = "naim_media_player"
 DEFAULT_CONFIG_MOUNT = Path("/Volumes/config")
 DEFAULT_HA_HOST = "192.168.1.111"
 MANIFEST_NAME = "deploy-manifest.json"
-VALID_MEDIA_STATES = {"off", "on", "idle", "playing", "paused", "standby", "unavailable", "unknown"}
+VALID_MEDIA_STATES = {"off", "on", "idle", "playing", "paused", "buffering", "standby", "unavailable", "unknown"}
 
 
 class HAStageError(RuntimeError):
