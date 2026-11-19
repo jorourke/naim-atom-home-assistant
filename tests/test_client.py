@@ -925,3 +925,34 @@ async def test_play_radio_item_sends_play(hass, state):
         mock.get(f"{BASE}/inputs/radio/favourites/1?cmd=play", status=200, payload={})
         await client.play_radio_item("inputs/radio/favourites/1")
         mock.assert_called_once()
+
+
+async def test_poll_failed_nowplaying_keeps_restrictions_and_format(hass, state):
+    """One failed /nowplaying fetch must not briefly bring restricted controls back."""
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_radio_playing"))
+        await client.poll_state()
+        before = (state.restrictions, dict(state.audio_format))
+        mock.get(f"{BASE}/power", payload=fx("power_on"))
+        mock.get(f"{BASE}/nowplaying", status=500)
+        mock.get(f"{BASE}/levels/room", payload=fx("levels_room"))
+        await client.poll_state()
+    assert (state.restrictions, state.audio_format) == before
+    assert "seek" in state.restrictions
+
+
+async def test_poll_standby_clears_restrictions_and_format(hass, state):
+    from tests.helpers import fx
+
+    client = NaimClient(hass, "192.168.1.100", 15081, 4545, state)
+    with aioresponses() as mock:
+        _mock_poll(mock, fx("nowplaying_radio_playing"))
+        await client.poll_state()
+        assert state.restrictions
+        mock.get(f"{BASE}/power", payload={**fx("power_on"), "system": "lona"})
+        await client.poll_state()
+    assert state.restrictions == frozenset()
+    assert state.audio_format == {}

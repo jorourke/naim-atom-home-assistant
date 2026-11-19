@@ -1,6 +1,7 @@
 """Media player entity for Naim devices."""
 
 import logging
+import time
 from datetime import datetime, timedelta
 
 from homeassistant.components.media_player import (
@@ -19,8 +20,8 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
 from .client import NaimClient
+from .config_flow import get_max_volume
 from .const import (
-    CONF_MAX_VOLUME,
     CONF_SERIAL,
     CONF_SOURCES,
     CONF_VOLUME_STEP,
@@ -41,6 +42,8 @@ _LOGGER = logging.getLogger(__name__)
 # continuously even while the device is in standby, so polling /power is the only
 # way to detect an externally-triggered power-on (e.g. via Spotify Connect).
 SCAN_INTERVAL = timedelta(seconds=3)
+# The device can report standby for ~20s after being woken (see CLAUDE.md).
+WAKE_GRACE_SECONDS = 30
 
 
 async def async_setup_entry(
@@ -59,7 +62,7 @@ async def async_setup_entry(
     sources = entry.options.get(CONF_SOURCES) or entry.data.get(CONF_SOURCES)
     serial = entry.data.get(CONF_SERIAL)
 
-    max_volume = entry.options.get(CONF_MAX_VOLUME, DEFAULT_MAX_VOLUME)
+    max_volume = get_max_volume(entry)
 
     player = NaimPlayer(hass, name, ip_address, entity_id, volume_step, sources, serial, entry.unique_id, max_volume)
     entry.runtime_data = player  # read by diagnostics
@@ -150,6 +153,7 @@ class NaimPlayer(MediaPlayerEntity):
         self._source_map = sources if sources else self.DEFAULT_SOURCE_MAP.copy()
         self._source_list = list(self._source_map.keys())
         self._input_names = {input_id: name for name, input_id in self._source_map.items()}
+        self._turned_on_at = float("-inf")
         self._state = NaimPlayerState(
             on_change=self._write_state_when_registered,
             debounce_timeout=2.0,
@@ -175,6 +179,8 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_added_to_hass(self) -> None:
         """Start push updates and the periodic input-name refresh."""
         await self._client.start_websocket()
+        # Run once now, so renames show straight after a restart instead of on the first timer tick.
+        self.hass.async_create_task(self._async_refresh_input_names())
         self.async_on_remove(
             async_track_time_interval(
                 self.hass, self._async_refresh_input_names, timedelta(seconds=INPUT_REFRESH_INTERVAL)
@@ -219,8 +225,12 @@ class NaimPlayer(MediaPlayerEntity):
         return {f"audio_{key}": value for key, value in self._state.audio_format.items()}
 
     def _require_on(self) -> None:
-        """Raise a clear error for transport commands, which the device ignores in standby."""
-        if self._state.state == MediaPlayerState.OFF:
+        """Raise a clear error for transport commands, which the device ignores in standby.
+
+        Right after turn_on the device keeps reporting standby for up to ~20s, so "turn on, then play"
+        must not be refused in that window; the command is sent as it was before this check existed.
+        """
+        if self._state.state == MediaPlayerState.OFF and time.monotonic() - self._turned_on_at > WAKE_GRACE_SECONDS:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="device_in_standby")
 
     async def async_browse_media(
@@ -252,7 +262,7 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_play_media(self, media_type: str, media_id: str, **kwargs) -> None:
         """Play a radio favourite chosen from the media browser."""
         self._require_on()
-        if not media_id.startswith("inputs/radio/"):
+        if not media_id.startswith("inputs/radio/") or ".." in media_id.split("/"):
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="invalid_media_id")
         await self._client.play_radio_item(media_id)
 
@@ -340,6 +350,7 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_turn_on(self) -> None:
         """Turn on the device."""
         await self._client.set_power(True)
+        self._turned_on_at = time.monotonic()
 
     async def async_turn_off(self) -> None:
         """Turn off the device."""

@@ -1211,3 +1211,27 @@ async def test_reconfigure_entry_without_serial_cannot_verify(hass: HomeAssistan
     assert result["type"] == "abort"
     assert result["reason"] == "no_serial"
     assert entry.data[CONF_IP_ADDRESS] == "192.168.1.127"
+
+
+async def test_zeroconf_devices_that_swap_ips_each_follow_their_own_entry(hass: HomeAssistant) -> None:
+    """Device B shows up at A's old IP: match by serial first, so B's entry is updated, not A's."""
+    entry_a = MockConfigEntry(
+        domain=DOMAIN, unique_id="AAA", data={CONF_IP_ADDRESS: "192.168.1.127", CONF_SERIAL: "AAA"}
+    )
+    entry_b = MockConfigEntry(
+        domain=DOMAIN, unique_id="BBB", data={CONF_IP_ADDRESS: "192.168.1.128", CONF_SERIAL: "BBB"}
+    )
+    entry_a.add_to_hass(hass)
+    entry_b.add_to_hass(hass)
+    result = await _start_discovery(hass, info=_discovery(host="192.168.1.127", serial="BBB"), serial="BBB")
+    assert result["reason"] == "already_configured"
+    assert entry_b.data[CONF_IP_ADDRESS] == "192.168.1.127"
+    assert entry_a.data[CONF_IP_ADDRESS] == "192.168.1.127"  # A is fixed by its own discovery
+
+
+def test_discovered_card_shows_device_name() -> None:
+    import json
+    from pathlib import Path
+
+    strings = json.loads(Path("custom_components/naim_media_player/translations/en.json").read_text())
+    assert strings["config"]["flow_title"] == "{name}"

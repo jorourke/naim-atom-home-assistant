@@ -179,7 +179,11 @@ class NaimClient:
         if not isinstance(children, list):
             return []
         return [
-            {"name": child.get("name") or child["ussi"], "id": child["ussi"], "image": child.get("artwork")}
+            {
+                "name": child.get("name") or child["ussi"],
+                "id": child["ussi"],
+                "image": child.get("artwork"),
+            }
             for child in children
             if isinstance(child, dict) and child.get("ussi")
         ]
@@ -204,13 +208,16 @@ class NaimClient:
         await self._state.update(source="poll", available=True)
 
         if power.get("system") == "lona":
-            await self._state.update(source="poll", power_state=MediaPlayerState.OFF)
+            await self._state.update(
+                source="poll", power_state=MediaPlayerState.OFF, restrictions=frozenset(), audio_format={}
+            )
             return
 
         nowplaying, levels = await asyncio.gather(
             self._get_json_safe("nowplaying", single_attempt=True),
             self._get_json_safe("levels/room", single_attempt=True),
         )
+        nowplaying_ok = isinstance(nowplaying, dict)
         nowplaying = nowplaying or {}
         levels = levels or {}
 
@@ -227,9 +234,12 @@ class NaimClient:
             "duration": _ms_to_seconds(nowplaying.get("duration")),
             "position": _ms_to_seconds(nowplaying.get("transportPosition")),
             "image_url": nowplaying.get("artwork"),
-            "restrictions": _restrictions(nowplaying),
-            "audio_format": _audio_format(nowplaying),
         }
+        # A failed fetch says nothing about the source, so keep the last values instead of
+        # briefly restoring restricted controls.
+        if nowplaying_ok:
+            updates["restrictions"] = _restrictions(nowplaying)
+            updates["audio_format"] = _audio_format(nowplaying)
 
         # Passive inputs (Analogue, etc.) have no real track metadata, and the
         # device's nowplaying response intermittently omits "title" between polls

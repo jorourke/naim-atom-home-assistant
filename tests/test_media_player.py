@@ -709,3 +709,44 @@ async def test_play_media_rejects_non_radio_path(mock_player):
         await mock_player.async_play_media("channel", "system")
     assert err.value.translation_key == "invalid_media_id"
     mock_player._client.play_radio_item.assert_not_awaited()
+
+
+# -- code review fixes
+
+
+@pytest.mark.parametrize("method", ["async_media_play", "async_play_media"])
+async def test_turn_on_then_play_is_sent_while_device_still_reports_standby(mock_player, method):
+    """The device reports standby for ~20s after waking, so play right after turn_on must still be sent."""
+    mock_player._client.play_radio_item = AsyncMock()
+    await mock_player.async_turn_on()
+    assert mock_player.state == MediaPlayerState.OFF
+    args = ("channel", "inputs/radio/favourites/1") if method == "async_play_media" else ()
+    await getattr(mock_player, method)(*args)
+    sent = mock_player._client.play_radio_item if args else mock_player._client.send_playback_command
+    sent.assert_awaited_once()
+
+
+async def test_standby_error_returns_after_wake_grace(mock_player):
+    await mock_player.async_turn_on()
+    mock_player._turned_on_at -= 31
+    with pytest.raises(ServiceValidationError):
+        await mock_player.async_media_play()
+
+
+async def test_play_media_rejects_dot_dot_path(mock_player):
+    await _on(mock_player)
+    mock_player._client.play_radio_item = AsyncMock()
+    with pytest.raises(ServiceValidationError) as err:
+        await mock_player.async_play_media("channel", "inputs/radio/../../power")
+    assert err.value.translation_key == "invalid_media_id"
+    mock_player._client.play_radio_item.assert_not_awaited()
+
+
+async def test_input_names_refresh_once_when_added(hass, mock_player):
+    mock_player.hass = hass
+    mock_player._source_map = {"Analog 1": "ana1"}
+    mock_player._client.get_inputs = AsyncMock(return_value={"Turntable": "ana1"})
+    await mock_player.async_added_to_hass()
+    await hass.async_block_till_done()
+    assert mock_player.source_list == ["Turntable"]
+    mock_player._call_on_remove_callbacks()

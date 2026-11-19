@@ -61,7 +61,7 @@ USER_SCHEMA = vol.Schema(
 )
 
 
-def _get_max_volume(config_entry: config_entries.ConfigEntry) -> int:
+def get_max_volume(config_entry: config_entries.ConfigEntry) -> int:
     """Return the configured maximum volume (defaults to 100, which changes nothing)."""
     return config_entry.options.get(CONF_MAX_VOLUME, DEFAULT_MAX_VOLUME)
 
@@ -197,9 +197,8 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # differently. Checking the stored IP first keeps identity
         # deterministic and prevents a duplicate entry regardless of whether
         # the existing entry was keyed by serial or by IP.
-        for entry in self._async_current_entries():
-            if entry.data.get(CONF_IP_ADDRESS) == ip:
-                return self.async_abort(reason="already_configured")
+        if self._ip_configured(ip):
+            return self.async_abort(reason="already_configured")
 
         # Prefer a stable unique ID based on the device serial (survives DHCP
         # address changes); fall back to the IP address if it can't be
@@ -220,6 +219,10 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return await self._async_select_sources_or_create()
 
+    def _ip_configured(self, ip: str) -> bool:
+        """Return whether an existing entry is stored against this IP."""
+        return any(entry.data.get(CONF_IP_ADDRESS) == ip for entry in self._async_current_entries())
+
     async def _async_select_sources_or_create(self) -> "FlowResult":
         """Show source selection if inputs were discovered; otherwise create the entry (hardcoded fallback)."""
         if self._available_sources:
@@ -232,18 +235,17 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="not_naim_device")
 
         host = discovery_info.host
-        # Same legacy check as the user flow: an entry stored against this IP is this device.
-        if any(entry.data.get(CONF_IP_ADDRESS) == host for entry in self._async_current_entries()):
-            return self.async_abort(reason="already_configured")
-
         serial = await async_get_device_serial(self.hass, host)
         if not serial:
             return self.async_abort(reason="no_serial")
 
         await self.async_set_unique_id(serial)
-        # If the device is known but moved to a new IP, follow it. The entry's update listener
-        # reloads it; HA 2026.12 drops the built-in reload for entries that have a listener.
+        # Match by serial before IP, so devices that swap IPs each follow their own entry. The entry's
+        # update listener reloads it; HA 2026.12 drops the built-in reload for entries with a listener.
         self._abort_if_unique_id_configured(updates={CONF_IP_ADDRESS: host}, reload_on_update=False)
+        # Same legacy check as the user flow: an entry keyed by IP and stored against this host is this device.
+        if self._ip_configured(host):
+            return self.async_abort(reason="already_configured")
 
         name = discovery_info.properties.get("name") or DEFAULT_NAME
         self._user_input = {
@@ -362,7 +364,7 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             data = {
                 CONF_VOLUME_STEP: int(user_input.get(CONF_VOLUME_STEP, _get_volume_step(self._config_entry))),
-                CONF_MAX_VOLUME: int(user_input.get(CONF_MAX_VOLUME, _get_max_volume(self._config_entry))),
+                CONF_MAX_VOLUME: int(user_input.get(CONF_MAX_VOLUME, get_max_volume(self._config_entry))),
             }
 
             if device_reachable:
@@ -400,7 +402,7 @@ class NaimOptionsFlow(config_entries.OptionsFlow):
         schema_dict[vol.Required(CONF_VOLUME_STEP, default=current_volume_step)] = vol.All(
             VOLUME_STEP_SELECTOR, vol.Coerce(int)
         )
-        schema_dict[vol.Required(CONF_MAX_VOLUME, default=_get_max_volume(self._config_entry))] = vol.All(
+        schema_dict[vol.Required(CONF_MAX_VOLUME, default=get_max_volume(self._config_entry))] = vol.All(
             MAX_VOLUME_SELECTOR, vol.Coerce(int)
         )
 

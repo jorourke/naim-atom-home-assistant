@@ -109,10 +109,12 @@ async def set_volume(self, volume: int) -> None:
 - In standby (`/power` `lona`) the device ignores transport commands. `media_play/pause/stop`, next/previous,
   `media_seek` and `play_media` raise a translated `ServiceValidationError` (`device_in_standby`) and send nothing.
   `select_source` stays allowed: on an Atom it wakes the device.
+  For `WAKE_GRACE_SECONDS` (30s) after `turn_on` these commands are sent anyway, because the device keeps
+  reporting standby while it wakes, so "turn on, then play" still works.
 - `CONF_MAX_VOLUME` (option, 1-100, default 100) caps `volume_set` and `volume_up`. Above the cap, `volume_up`
   does nothing; the integration never lowers volume on its own.
 - `NaimPlayer._async_refresh_input_names` re-reads `/inputs` every `INPUT_REFRESH_INTERVAL` seconds and renames
-  sources in memory only, keyed by input ID. It must never write the config entry (the update listener reloads).
+  sources in memory only, keyed by input ID. It also runs once when the entity is added. It must never write the config entry (the update listener reloads).
 - Radio favourites are played through `browse_media`/`play_media` (`inputs/radio/...` paths only).
 - Audio format (`audio_codec`, `audio_sample_rate`, `audio_bit_depth`, `audio_bit_rate`, `audio_channels`) is
   exposed as media player `extra_state_attributes`, not a sensor: one write, no extra entity.
@@ -348,7 +350,7 @@ tests/
 - Use async/await for all I/O
 - Add type hints where helpful (but not required)
 - Follow Home Assistant entity patterns
-- Keep line length reasonable (~100 chars)
+- Line length 120 (ruff, set in pyproject)
 - Use `_LOGGER` for debug/error logging
 
 ### Commit Messages
