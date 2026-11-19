@@ -241,8 +241,9 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="no_serial")
 
         await self.async_set_unique_id(serial)
-        # If the device is known but moved to a new IP, follow it (this also reloads the entry).
-        self._abort_if_unique_id_configured(updates={CONF_IP_ADDRESS: host})
+        # If the device is known but moved to a new IP, follow it. The entry's update listener
+        # reloads it; HA 2026.12 drops the built-in reload for entries that have a listener.
+        self._abort_if_unique_id_configured(updates={CONF_IP_ADDRESS: host}, reload_on_update=False)
 
         name = discovery_info.properties.get("name") or DEFAULT_NAME
         self._user_input = {

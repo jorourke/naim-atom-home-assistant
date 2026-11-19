@@ -1086,8 +1086,8 @@ async def test_zeroconf_new_ip_updates_same_entry_without_second_entry(hass: Hom
     assert result["reason"] == "already_configured"
     assert entry.data[CONF_IP_ADDRESS] == "192.168.1.127"
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
-    # Not loaded in this test; HA reloads loaded entries on update, and the update listener does too.
-    assert reload.call_count <= 1
+    # The entry's update listener does the reload; the flow must not schedule a second one.
+    reload.assert_not_called()
 
 
 async def test_zeroconf_legacy_ip_keyed_entry_is_already_configured(hass: HomeAssistant) -> None:
