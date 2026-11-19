@@ -1165,6 +1165,7 @@ async def _reconfigure(hass, entry, host, serial):
 
 async def test_reconfigure_same_device_new_host_updates_and_reloads(hass: HomeAssistant) -> None:
     entry = _reconfigure_entry(hass)
+    # The entry's update listener does the reload; the flow must not schedule one itself.
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         result = await _reconfigure(hass, entry, "192.168.1.60", ATOM_SERIAL)
     assert result["type"] == "abort"
@@ -1172,7 +1173,7 @@ async def test_reconfigure_same_device_new_host_updates_and_reloads(hass: HomeAs
     assert entry.data[CONF_IP_ADDRESS] == "192.168.1.60"
     assert entry.data[CONF_SOURCES] == {"Spotify": "spotify"}
     assert entry.unique_id == ATOM_SERIAL
-    reload.assert_called_once_with(entry.entry_id)
+    reload.assert_not_called()
 
 
 async def test_reconfigure_same_host_succeeds(hass: HomeAssistant) -> None:

@@ -596,6 +596,11 @@ async def test_volume_set_stops_at_cap(mock_player):
     mock_player._client.set_volume.assert_awaited_once_with(50)
 
 
+async def test_volume_set_above_cap_never_lowers_volume(mock_player):
+    await _capped(mock_player, 50, 70).async_set_volume_level(0.8)
+    mock_player._client.set_volume.assert_awaited_once_with(70)
+
+
 async def test_volume_up_stops_at_cap(mock_player):
     await _capped(mock_player, 40, 38).async_volume_up()
     mock_player._client.set_volume.assert_awaited_once_with(40)

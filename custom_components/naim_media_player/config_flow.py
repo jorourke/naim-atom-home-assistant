@@ -283,7 +283,7 @@ class NaimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             elif serial != entry.data[CONF_SERIAL]:
                 return self.async_abort(reason="wrong_device")
             else:
-                return self.async_update_reload_and_abort(entry, data_updates={CONF_IP_ADDRESS: host})
+                return self.async_update_and_abort(entry, data_updates={CONF_IP_ADDRESS: host})
 
         return self.async_show_form(
             step_id="reconfigure",

@@ -348,7 +348,9 @@ class NaimPlayer(MediaPlayerEntity):
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level."""
         volume = max(0.0, min(1.0, volume))
-        await self._client.set_volume(min(int(round(volume * 100)), self._max_volume))
+        current = int(round(self._state.volume * 100))
+        # Cap only raises; never push the volume below where the device already is.
+        await self._client.set_volume(min(int(round(volume * 100)), max(self._max_volume, current)))
 
     async def _async_step_volume(self, direction: int) -> None:
         """Change volume by one configured step in the given direction (+1/-1)."""
